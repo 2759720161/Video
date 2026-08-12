@@ -1,0 +1,51 @@
+/node_modules/
+/oh_modules/
+/local.properties
+/build-profile.local.json5
+
+# DevEco Studio and local tooling
+/.idea/
+/.hvigor/
+/.arts/
+/.codeartsdoer/
+/.appanalyzer/
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test/
+**/.cxx/
+**/build/
+
+# Local logs, notes, downloaded references, and project copies
+/*.log
+/log.txt
+/参考日志.txt
+/字幕/
+/新建文件夹/
+/mpv-master/
+
+# Generated packages and native build products
+*.hap
+*.hsp
+*.app
+*.o
+*.obj
+*.a
+*.d
+*.so
+*.dll
+*.dylib
+*.exe
+
+# The application links this checked-in runtime directly.
+!native/mpv/dist/lib/arm64-v8a/libmpv.so
+
+# Third-party prebuilt dependencies and obsolete compatibility output
+/native/mpv/prebuilt/
+/native/mpv/legacy/
+/native/mpv/ffmpeg-src/config.h
+/native/mpv/ffmpeg-src/config_components.h
+/native/mpv/ffmpeg-src/ffbuild/config.*
+
+# Never include nested repository metadata
+**/.git/

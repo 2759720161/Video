@@ -1,0 +1,348 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#000000"
+    },
+    {
+      "name": "tab_bar_background",
+      "value": "#1A1A1A"
+    },
+    {
+      "name": "tab_icon_selected",
+      "value": "#3B82F6"
+    },
+    {
+      "name": "tab_icon_unselected",
+      "value": "#666666"
+    },
+    {
+      "name": "text_primary",
+      "value": "#E5E5E5"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#999999"
+    },
+    {
+      "name": "card_background",
+      "value": "#1E1E1E"
+    },
+    {
+      "name": "titlebar_button_surface",
+      "value": "#B31C2735"
+    },
+    {
+      "name": "loading_color",
+      "value": "#3B82F6"
+    },
+    {
+      "name": "page_background",
+      "value": "#121212"
+    },
+    {
+      "name": "divider_color",
+      "value": "#333333"
+    },
+    {
+      "name": "category_menu_surface",
+      "value": "#991B2533"
+    },
+    {
+      "name": "speed_menu_surface",
+      "value": "#331B2533"
+    },
+    {
+      "name": "category_menu_item_selected",
+      "value": "#2E0A59F7"
+    },
+    {
+      "name": "category_menu_divider",
+      "value": "#33FFFFFF"
+    },
+    {
+      "name": "rating_star",
+      "value": "#4DA3FF"
+    },
+    {
+      "name": "rating_star_empty",
+      "value": "#5F6B7A"
+    },
+    {
+      "name": "text_on_primary",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "hds_tab_gradient_mask",
+      "value": "#66000000"
+    },
+    {
+      "name": "card_specular_border",
+      "value": "#22FFFFFF"
+    },
+    {
+      "name": "home_bg_top",
+      "value": "#0D1117"
+    },
+    {
+      "name": "page_background_media",
+      "value": "#0B1220"
+    },
+    {
+      "name": "player_side_panel_surface",
+      "value": "#D90B1220"
+    },
+    {
+      "name": "text_title",
+      "value": "#E6EEF8"
+    },
+    {
+      "name": "text_body",
+      "value": "#D8E2EE"
+    },
+    {
+      "name": "text_label",
+      "value": "#B8C4D2"
+    },
+    {
+      "name": "text_muted",
+      "value": "#8B98A8"
+    },
+    {
+      "name": "text_subtitle",
+      "value": "#9AA8B8"
+    },
+    {
+      "name": "text_hint",
+      "value": "#8A96A8"
+    },
+    {
+      "name": "text_placeholder",
+      "value": "#8A96A8"
+    },
+    {
+      "name": "text_episode_unselected",
+      "value": "#C8D4E2"
+    },
+    {
+      "name": "text_download_button",
+      "value": "#E8F2FF"
+    },
+    {
+      "name": "text_overlay_sub",
+      "value": "#888888"
+    },
+    {
+      "name": "text_retry_count",
+      "value": "#777777"
+    },
+    {
+      "name": "text_error",
+      "value": "#EF5350"
+    },
+    {
+      "name": "accent_blue",
+      "value": "#4DA3FF"
+    },
+    {
+      "name": "accent_blue_light",
+      "value": "#173A5C"
+    },
+    {
+      "name": "source_badge_bg",
+      "value": "#D9173A5C"
+    },
+    {
+      "name": "status_success",
+      "value": "#66BB6A"
+    },
+    {
+      "name": "status_warning",
+      "value": "#FFB74D"
+    },
+    {
+      "name": "status_info",
+      "value": "#42A5F5"
+    },
+    {
+      "name": "status_error",
+      "value": "#EF5350"
+    },
+    {
+      "name": "status_default",
+      "value": "#757575"
+    },
+    {
+      "name": "border_tag",
+      "value": "#303A4C"
+    },
+    {
+      "name": "border_panel",
+      "value": "#334057"
+    },
+    {
+      "name": "border_item",
+      "value": "#303A4C"
+    },
+    {
+      "name": "divider_blue",
+      "value": "#2D3A4D"
+    },
+    {
+      "name": "skeleton_background",
+      "value": "#202B3A"
+    },
+    {
+      "name": "episode_card_background",
+      "value": "#101A2A"
+    },
+    {
+      "name": "episode_item_selected_bg",
+      "value": "#132A44"
+    },
+    {
+      "name": "episode_item_unselected_bg",
+      "value": "#111C2C"
+    },
+    {
+      "name": "road_unselected_bg",
+      "value": "#142033"
+    },
+    {
+      "name": "button_primary_bg",
+      "value": "#D93B82F6"
+    },
+    {
+      "name": "button_accent_bg",
+      "value": "#D94DA3FF"
+    },
+    {
+      "name": "button_info_bg",
+      "value": "#D942A5F5"
+    },
+    {
+      "name": "button_neutral_bg",
+      "value": "#D9666666"
+    },
+    {
+      "name": "button_ghost_bg",
+      "value": "#DF222222"
+    },
+    {
+      "name": "button_floating_bg",
+      "value": "#D9173A5C"
+    },
+    {
+      "name": "panel_dark_bg",
+      "value": "#D90B1220"
+    },
+    {
+      "name": "overlay_control_bg",
+      "value": "#B0000000"
+    },
+    {
+      "name": "overlay_topbar_bg",
+      "value": "#66000000"
+    },
+    {
+      "name": "overlay_modal_bg",
+      "value": "#80000000"
+    },
+    {
+      "name": "surface_button_bg",
+      "value": "#66222222"
+    },
+    {
+      "name": "border_specular",
+      "value": "#4DFFFFFF"
+    },
+    {
+      "name": "border_subtle",
+      "value": "#70FFFFFF"
+    },
+    {
+      "name": "border_light",
+      "value": "#40FFFFFF"
+    },
+    {
+      "name": "border_faint",
+      "value": "#24FFFFFF"
+    },
+    {
+      "name": "track_slider",
+      "value": "#80FFFFFF"
+    },
+    {
+      "name": "text_overlay_dim",
+      "value": "#CCFFFFFF"
+    },
+    {
+      "name": "shadow_button_primary",
+      "value": "#223B82F6"
+    },
+    {
+      "name": "shadow_button_accent",
+      "value": "#204DA3FF"
+    },
+    {
+      "name": "shadow_button_info",
+      "value": "#2242A5F5"
+    },
+    {
+      "name": "shadow_surface",
+      "value": "#18000000"
+    },
+    {
+      "name": "shadow_light",
+      "value": "#10000000"
+    },
+    {
+      "name": "color_transparent",
+      "value": "#00000000"
+    },
+    {
+      "name": "card_surface_blue",
+      "value": "#D9111C2C"
+    },
+    {
+      "name": "detail_info_panel_bg",
+      "value": "#00000000"
+    },
+    {
+      "name": "detail_info_metric_bg",
+      "value": "#00000000"
+    },
+    {
+      "name": "detail_info_border",
+      "value": "#22FFFFFF"
+    },
+    {
+      "name": "detail_info_shadow",
+      "value": "#4D000000"
+    },
+    {
+      "name": "tag_chip_bg",
+      "value": "#1AFFFFFF"
+    },
+    {
+      "name": "bottom_bar_surface",
+      "value": "#D9111C2C"
+    },
+    {
+      "name": "hero_gradient_mid",
+      "value": "#CC0B1220"
+    },
+    {
+      "name": "hero_gradient_dark",
+      "value": "#66000000"
+    },
+    {
+      "name": "hero_gradient_start",
+      "value": "#22000000"
+    },
+    {
+      "name": "side_bar_background",
+      "value": "#E61A1A1A"
+    }
+  ]
+}

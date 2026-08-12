@@ -1,0 +1,13 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/local/FolderPage",
+    "pages/local/ContinueWatchingPage",
+    "pages/player/LocalPlayerPage",
+    "pages/settings/PlayerSettingsPage",
+    "pages/settings/SubtitleSettingsPage",
+    "pages/settings/AppearanceSettingsPage",
+    "pages/settings/AboutPage",
+    "pages/settings/ThirdPartyPage"
+  ]
+}
