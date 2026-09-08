@@ -1839,7 +1839,7 @@ if features['ohos']
     # unpackaged libmpv.so.2 at application startup.
     libmpv = library('mpv', sources, dependencies: dependencies, gnu_symbol_visibility: 'hidden',
                      include_directories: incdir_public,
-                     link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic']),
+                     link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic', '-lnative_media_venc']),
                      install: get_option('libmpv'),
                      build_by_default: get_option('libmpv'))
 else

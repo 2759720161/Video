@@ -9,8 +9,10 @@ import { PLAYER_AUTO_PIP_DEFAULT, PREFS_KEY_PLAYER_AUTO_PIP } from '../utils/Pla
 import { PLAYER_AUTO_NEXT_DEFAULT, PREFS_KEY_PLAYER_AUTO_NEXT } from '../utils/PlayerAutoNext'
 import {
   PLAYER_DEFAULT_SPEED,
+  PLAYER_OPEN_ORIENTATION_DEFAULT,
   PLAYER_SEEK_SECONDS_DEFAULT,
   PREFS_KEY_PLAYER_DEFAULT_SPEED,
+  PREFS_KEY_PLAYER_OPEN_ORIENTATION,
   PREFS_KEY_PLAYER_SEEK_SECONDS
 } from '../utils/PlayerPlaybackPreferences'
 import {
@@ -40,6 +42,11 @@ import {
   PREFS_KEY_BOTTOM_TAB_SHOW_ANIMATION
 } from '../utils/BottomTabAutoHide'
 import { Logger } from '../utils/Logger'
+import {
+  HIDE_MEDIA_CARDS_DEFAULT,
+  PREFS_KEY_HIDE_CONTINUE_WATCHING,
+  PREFS_KEY_HIDE_LOCAL_MEDIA
+} from '../utils/MediaVisibilityPreferences'
 
 const logger = new Logger('EntryAbility')
 
@@ -65,6 +72,9 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate(PREFS_KEY_PLAYER_AUTO_NEXT, PLAYER_AUTO_NEXT_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_PLAYER_DEFAULT_SPEED, PLAYER_DEFAULT_SPEED)
     AppStorage.setOrCreate(PREFS_KEY_PLAYER_SEEK_SECONDS, PLAYER_SEEK_SECONDS_DEFAULT)
+    AppStorage.setOrCreate(PREFS_KEY_PLAYER_OPEN_ORIENTATION, PLAYER_OPEN_ORIENTATION_DEFAULT)
+    AppStorage.setOrCreate(PREFS_KEY_HIDE_LOCAL_MEDIA, HIDE_MEDIA_CARDS_DEFAULT)
+    AppStorage.setOrCreate(PREFS_KEY_HIDE_CONTINUE_WATCHING, HIDE_MEDIA_CARDS_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_ENABLED, SUBTITLE_ENABLED_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_FONT_SIZE, SUBTITLE_FONT_SIZE_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_FONT_BOLD, SUBTITLE_FONT_BOLD_DEFAULT)
@@ -74,6 +84,14 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_OUTLINE_ENABLED, SUBTITLE_OUTLINE_ENABLED_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_TIME_OFFSET_MS, SUBTITLE_TIME_OFFSET_MS_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_HDS_MATERIAL_LEVEL, HDS_MATERIAL_LEVEL_DEFAULT)
+
+    // The home library can start scanning as soon as the first page is shown.
+    // Initialize its thumbnail cache before any asynchronous store setup.
+    try {
+      FileStore.getInstance().init(this.context)
+    } catch (err) {
+      logger.warn('Initialize local file storage failed: %{public}s', String(err))
+    }
 
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET)
@@ -133,6 +151,11 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_AUTO_NEXT, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_PLAYER_AUTO_NEXT, PLAYER_AUTO_NEXT_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_DEFAULT_SPEED, await PreferencesStore.getInstance().getNumber(PREFS_KEY_PLAYER_DEFAULT_SPEED, PLAYER_DEFAULT_SPEED))
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_SEEK_SECONDS, await PreferencesStore.getInstance().getNumber(PREFS_KEY_PLAYER_SEEK_SECONDS, PLAYER_SEEK_SECONDS_DEFAULT))
+      AppStorage.setOrCreate(PREFS_KEY_PLAYER_OPEN_ORIENTATION,
+        await PreferencesStore.getInstance().getString(PREFS_KEY_PLAYER_OPEN_ORIENTATION,
+          PLAYER_OPEN_ORIENTATION_DEFAULT))
+      AppStorage.setOrCreate(PREFS_KEY_HIDE_LOCAL_MEDIA, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_HIDE_LOCAL_MEDIA, HIDE_MEDIA_CARDS_DEFAULT))
+      AppStorage.setOrCreate(PREFS_KEY_HIDE_CONTINUE_WATCHING, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_HIDE_CONTINUE_WATCHING, HIDE_MEDIA_CARDS_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_ENABLED, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_SUBTITLE_ENABLED, SUBTITLE_ENABLED_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_FONT_SIZE, await PreferencesStore.getInstance().getNumber(PREFS_KEY_SUBTITLE_FONT_SIZE, SUBTITLE_FONT_SIZE_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_FONT_BOLD, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_SUBTITLE_FONT_BOLD, SUBTITLE_FONT_BOLD_DEFAULT))
@@ -157,7 +180,6 @@ export default class EntryAbility extends UIAbility {
       logger.error('Initialize local history database failed: %{public}s', String(err))
     }
     try {
-      FileStore.getInstance().init(this.context)
       await UserDownloadFolder.ensureOwnFolder(this.context)
     } catch (err) {
       logger.warn('Initialize local file storage failed: %{public}s', String(err))

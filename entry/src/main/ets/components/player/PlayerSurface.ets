@@ -129,6 +129,10 @@ export struct PlayerSurface {
   onSurfaceReady?: (controller: XComponentController) => void;
 
   aboutToDisappear(): void {
+    // A @Watch callback can schedule prepare for the next event-loop turn.
+    // Never let that callback run after this component has disappeared or
+    // handed its engine to the retained player session.
+    this.cancelPendingPrepare()
     const pageActive = AppStorage.get<boolean>('playerPageActive') ?? false
     const targetUrl = this.getTargetUrl()
     if (!this.playbackFailed && (this.keepAliveOnDisappear || pageActive) &&
@@ -494,11 +498,34 @@ export struct PlayerSurface {
     this.preparingUrl = targetUrl
     this.preparedUrl = ''
     const options = this.createTargetPlaybackOptions(targetUrl)
+    const engine = this.playerEngine
     logger.warn('CrashDiag PlayerSurface replace media on existing mpv: seq=%{public}d urlHash=%{public}s ' +
-      'surface=%{public}s', seq, this.shortHash(targetUrl), this.surfaceId)
-    this.playerEngine.prepare(options)
-    this.preparedUrl = targetUrl
-    this.preparingUrl = ''
+      'surface=%{public}s pendingPrepare=scheduled', seq, this.shortHash(targetUrl), this.surfaceId)
+
+    // @Watch runs as part of the parent's re-render. prepare() immediately
+    // reports a player state, and doing that synchronously here mutates the
+    // parent's @State during build. Defer the whole media replacement until
+    // ArkUI has committed the current render.
+    this.pendingPrepareTimer = setTimeout(() => {
+      this.pendingPrepareTimer = -1
+      if (this.isDestroyed) {
+        logger.warn('CrashDiag PlayerSurface replace skipped: seq=%{public}d reason=destroyed', seq)
+        return
+      }
+      if (this.activeInitSeq !== seq || this.lastRequestedUrl !== options.url || engine !== this.playerEngine) {
+        logger.warn('CrashDiag PlayerSurface replace skipped: seq=%{public}d reason=stale currentSeq=%{public}d',
+          seq, this.activeInitSeq)
+        return
+      }
+      const prepareStartMs = Date.now()
+      logger.warn('CrashDiag PlayerSurface replace begin: seq=%{public}d urlHash=%{public}s',
+        seq, this.shortHash(options.url))
+      engine.prepare(options)
+      logger.warn('CrashDiag PlayerSurface replace returned: seq=%{public}d elapsed=%{public}dms',
+        seq, Date.now() - prepareStartMs)
+      this.preparedUrl = options.url
+      this.preparingUrl = ''
+    }, 0)
   }
 
   private createTargetPlaybackOptions(targetUrl: string): PlaybackOptions {

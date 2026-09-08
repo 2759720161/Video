@@ -26,6 +26,10 @@ bash native/mpv/scripts/build_all_ohos.sh ~/ohos_ndk
 普通应用构建只依赖仓库中已提交的 `dist/`，无需准备 `prebuilt/`；只有重新
 编译 FFmpeg 或 mpv 时才需要本地预编译依赖。
 
+应用内 m3u8 转 MP4 使用 mpv 的编码输出，重编译时需先运行
+`scripts/build_ffmpeg_ohos.sh`，该脚本会启用 OpenHarmony H.264 视频编码器；随后再运行
+`scripts/build_libmpv_ohos.sh` 更新 `dist/` 中的运行库。
+
 ## 已集成功能
 
 - HarmonyOS XComponent / EGL / OpenGL GPU 输出

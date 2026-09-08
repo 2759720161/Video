@@ -23,11 +23,25 @@ WRAPPER_DIR="${MPV_ROOT}/build/wrappers"
 mkdir -p "${WRAPPER_DIR}"
 export OHOS_NDK WRAPPER_DIR MPV_BUILD_TMPDIR="${MPV_ROOT}/build/tmp"
 
-wsl_to_win() { wslpath -w "$1" 2>/dev/null || echo "$1"; }
+wsl_to_win() {
+    # Keep explicit /mnt/<drive>/ paths logical; resolving aliases can bring
+    # spaces from the DevEco Studio installation path back into clang args.
+    if [[ "$1" =~ ^/mnt/([a-zA-Z])/(.*)$ ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        drive="${drive^^}"
+        rest="${rest//\\/}"
+        rest="${rest//\//\\}"
+        printf '%s' "${drive}:\\${rest}"
+    else
+        wslpath -w "$1" 2>/dev/null || echo "$1"
+    fi
+}
 
 OHOS_NDK_WIN=$(wsl_to_win "${OHOS_NDK}")
 SYSROOT_WIN=$(wsl_to_win "${OHOS_NDK}/sysroot")
 SYSROOT_LIB_WIN=$(wsl_to_win "${OHOS_NDK}/sysroot/usr/lib/aarch64-linux-ohos")
+export OHOS_NDK_WIN_OVERRIDE="${OHOS_NDK_WIN}"
 FFMPEG_WIN=$(wsl_to_win "${FFMPEG_PREFIX}")
 DEPS_WIN=$(wsl_to_win "${DEPS_PREFIX}")
 
@@ -102,9 +116,9 @@ pkg-config = '${PKG_CONFIG_BIN}'
 
 [built-in options]
 c_args = ['-target', 'aarch64-linux-ohos', '--sysroot=${SYSROOT_WIN}', '-D__MUSL__', '-fPIC', '-O2', '-I${FFMPEG_PREFIX}/include', '-I${DEPS_PREFIX}/include', '-I${DEPS_PREFIX}/include/freetype2']
-c_link_args = ['-target', 'aarch64-linux-ohos', '--sysroot=${SYSROOT_WIN}', '-L${FFMPEG_WIN}\\lib', '-L${DEPS_WIN}\\lib', '-L${SYSROOT_LIB_WIN}', '-lavformat', '-lavcodec', '-lavfilter', '-lswresample', '-lswscale', '-lavutil', '-lmbedtls', '-lmbedx509', '-lmbedcrypto', '-lm', '-lc', '-lpthread']
+c_link_args = ['-target', 'aarch64-linux-ohos', '--sysroot=${SYSROOT_WIN}', '-L${FFMPEG_WIN}\\lib', '-L${DEPS_WIN}\\lib', '-L${SYSROOT_LIB_WIN}', '-lavformat', '-lavcodec', '-lavfilter', '-lswresample', '-lswscale', '-lavutil', '-lmbedtls', '-lmbedx509', '-lmbedcrypto', '-lnative_media_venc', '-lm', '-lc', '-lpthread']
 cpp_args = ['-target', 'aarch64-linux-ohos', '--sysroot=${SYSROOT_WIN}', '-D__MUSL__', '-fPIC', '-O2', '-I${FFMPEG_PREFIX}/include', '-I${DEPS_PREFIX}/include', '-I${DEPS_PREFIX}/include/freetype2']
-cpp_link_args = ['-target', 'aarch64-linux-ohos', '--sysroot=${SYSROOT_WIN}', '-L${FFMPEG_WIN}\\lib', '-L${DEPS_WIN}\\lib', '-L${SYSROOT_LIB_WIN}', '-lavformat', '-lavcodec', '-lavfilter', '-lswresample', '-lswscale', '-lavutil', '-lmbedtls', '-lmbedx509', '-lmbedcrypto', '-lm', '-lc', '-lpthread']
+cpp_link_args = ['-target', 'aarch64-linux-ohos', '--sysroot=${SYSROOT_WIN}', '-L${FFMPEG_WIN}\\lib', '-L${DEPS_WIN}\\lib', '-L${SYSROOT_LIB_WIN}', '-lavformat', '-lavcodec', '-lavfilter', '-lswresample', '-lswscale', '-lavutil', '-lmbedtls', '-lmbedx509', '-lmbedcrypto', '-lnative_media_venc', '-lm', '-lc', '-lpthread']
 
 [host_machine]
 system = 'linux'

@@ -3,11 +3,13 @@
     "pages/Index",
     "pages/local/FolderPage",
     "pages/local/ContinueWatchingPage",
+    "pages/emby/EmbyLibraryPage",
+    "pages/tools/M3u8ConverterPage",
     "pages/player/LocalPlayerPage",
+    "pages/settings/EmbySettingsPage",
     "pages/settings/PlayerSettingsPage",
     "pages/settings/SubtitleSettingsPage",
     "pages/settings/AppearanceSettingsPage",
-    "pages/settings/AboutPage",
-    "pages/settings/ThirdPartyPage"
+    "pages/settings/AboutPage"
   ]
 }

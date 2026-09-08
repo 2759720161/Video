@@ -2,7 +2,7 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#F2F2F2"
+      "value": "#000000"
     },
     {
       "name": "tab_bar_background",

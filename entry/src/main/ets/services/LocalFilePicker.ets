@@ -19,6 +19,12 @@ export class LocalVideoResult {
   fileSize: number = 0
 }
 
+export class LocalM3u8Result {
+  fileName: string = ''
+  uri: string = ''
+  fileSize: number = 0
+}
+
 export class LocalSubtitleResult {
   fileName: string = ''
   uri: string = ''
@@ -68,6 +74,29 @@ export class LocalFilePicker {
       return result
     } catch (err) {
       logger.error('选择视频文件失败: %{public}s', err instanceof Error ? err.message : String(err))
+      return null
+    }
+  }
+
+  static async pickM3u8File(context: common.UIAbilityContext): Promise<LocalM3u8Result | null> {
+    try {
+      const options = new picker.DocumentSelectOptions()
+      options.maxSelectNumber = 1
+      options.fileSuffixFilters = ['m3u8 播放列表|.m3u8,.m3u']
+      const documentPicker = new picker.DocumentViewPicker(context)
+      const uris: string[] = await documentPicker.select(options)
+      if (uris.length === 0) {
+        return null
+      }
+      const uri = uris[0]
+      await LocalFilePicker.persistUriPermission(uri)
+      const result = new LocalM3u8Result()
+      result.uri = uri
+      result.fileName = LocalFilePicker.getFileNameFromUri(uri)
+      result.fileSize = LocalFilePicker.getFileSize(uri)
+      return result
+    } catch (err) {
+      logger.warn('选择 m3u8 文件失败: %{public}s', err instanceof Error ? err.message : String(err))
       return null
     }
   }
@@ -142,12 +171,20 @@ export class LocalFilePicker {
     if (uri.length === 0) {
       return false
     }
+    // Files below the activated app-owned Download directory are exposed as
+    // file://docs URIs, but opening those URIs through DataShare produces a
+    // failing IPC round trip on current devices. Verify the authorized path
+    // directly instead.
+    if (LocalFilePicker.isOwnDownloadModeUri(uri)) {
+      try {
+        const path = new fileUri.FileUri(uri).path
+        return fileIo.accessSync(path) && fileIo.statSync(path).isFile()
+      } catch (_err) {
+        return false
+      }
+    }
     if (LocalFilePicker.canReadUri(uri)) {
       return true
-    }
-    if (LocalFilePicker.isOwnDownloadModeUri(uri)) {
-      logger.warn('本应用Download模式文件不可读，跳过持久化激活: %{public}s', uri.substring(0, 60))
-      return false
     }
     const activated = await LocalFilePicker.activatePersistedUriPermission(uri)
     if (!activated) {

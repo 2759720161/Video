@@ -27,6 +27,7 @@
 
 #include "libavutil/fifo.h"
 #include "libavutil/hwcontext_oh.h"
+#include "libavutil/internal.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
@@ -65,6 +66,7 @@ typedef struct OHCodecEncContext {
     char *name;
     int allow_sw;
     int bitrate_mode;
+    bool logged_inferred_keyframe;
 } OHCodecEncContext;
 
 static const enum AVPixelFormat ohcodec_pix_fmts[] = {
@@ -321,6 +323,12 @@ static av_cold int oh_encode_init(AVCodecContext *avctx)
 {
     OHCodecEncContext *s = avctx->priv_data;
 
+    av_log(avctx, AV_LOG_INFO,
+           "Encoder timing: time_base=%d/%d pkt_timebase=%d/%d framerate=%d/%d\n",
+           avctx->time_base.num, avctx->time_base.den,
+           avctx->pkt_timebase.num, avctx->pkt_timebase.den,
+           avctx->framerate.num, avctx->framerate.den);
+
     // Initialize these fields first, so oh_decode_close can destroy them safely
     ff_mutex_init(&s->input_mutex, NULL);
     ff_cond_init(&s->input_cond, NULL);
@@ -383,8 +391,81 @@ static av_cold int oh_encode_close(AVCodecContext *avctx)
     return 0;
 }
 
+static bool oh_encode_is_random_access_nal(enum AVCodecID codec_id,
+                                           uint8_t nal_header)
+{
+    if (codec_id == AV_CODEC_ID_H264)
+        return (nal_header & 0x1f) == 5;
+
+    if (codec_id == AV_CODEC_ID_HEVC) {
+        int nal_type = (nal_header >> 1) & 0x3f;
+        return nal_type >= 16 && nal_type <= 21;
+    }
+
+    return false;
+}
+
+/*
+ * Some OpenHarmony hardware encoders omit AVCODEC_BUFFER_FLAGS_SYNC_FRAME
+ * on output even though the bitstream contains an IDR/CRA picture. Relying
+ * solely on that flag leaves MP4 without an stss sync-sample table, which in
+ * turn makes AVImageGenerator unable to seek to a thumbnail frame.
+ *
+ * Accept both Annex-B and four-byte length-prefixed access units. H.264 uses
+ * IDR type 5; HEVC random-access pictures use IRAP types 16 through 21.
+ */
+static bool oh_encode_packet_has_random_access_nal(AVCodecContext *avctx,
+                                                    const uint8_t *data,
+                                                    size_t size)
+{
+    bool found_start_code = false;
+
+    for (size_t i = 0; i + 3 < size; i++) {
+        size_t prefix_size = 0;
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+            prefix_size = 3;
+        } else if (i + 4 < size && data[i] == 0 && data[i + 1] == 0 &&
+                   data[i + 2] == 0 && data[i + 3] == 1) {
+            prefix_size = 4;
+        }
+        if (!prefix_size)
+            continue;
+
+        found_start_code = true;
+        size_t nal_offset = i + prefix_size;
+        if (nal_offset < size &&
+            oh_encode_is_random_access_nal(avctx->codec_id, data[nal_offset]))
+            return true;
+        i = nal_offset;
+    }
+
+    if (found_start_code)
+        return false;
+
+    size_t offset = 0;
+    bool found_length_prefix = false;
+    while (offset + 4 < size) {
+        uint32_t nal_size = ((uint32_t)data[offset] << 24) |
+                            ((uint32_t)data[offset + 1] << 16) |
+                            ((uint32_t)data[offset + 2] << 8) |
+                            (uint32_t)data[offset + 3];
+        offset += 4;
+        if (!nal_size || nal_size > size - offset)
+            break;
+
+        found_length_prefix = true;
+        if (oh_encode_is_random_access_nal(avctx->codec_id, data[offset]))
+            return true;
+        offset += nal_size;
+    }
+
+    if (!found_length_prefix && size > 0)
+        return oh_encode_is_random_access_nal(avctx->codec_id, data[0]);
+    return false;
+}
+
 static int oh_encode_output_packet(AVCodecContext *avctx, AVPacket *pkt,
-                                  OHBufferQueueItem *output)
+                                   OHBufferQueueItem *output)
 {
     OHCodecEncContext *s = avctx->priv_data;
     uint8_t *p;
@@ -443,8 +524,20 @@ static int oh_encode_output_packet(AVCodecContext *avctx, AVPacket *pkt,
 
     memcpy(pkt->data + extradata_size, p + attr.offset, attr.size);
     pkt->pts = av_rescale_q(attr.pts, AV_TIME_BASE_Q, avctx->time_base);
-    if (attr.flags & AVCODEC_BUFFER_FLAGS_SYNC_FRAME)
+    if (avctx->framerate.num > 0 && avctx->framerate.den > 0)
+        pkt->duration = av_rescale_q(1, av_inv_q(avctx->framerate),
+                                     avctx->time_base);
+    bool reported_keyframe = attr.flags & AVCODEC_BUFFER_FLAGS_SYNC_FRAME;
+    bool inferred_keyframe = oh_encode_packet_has_random_access_nal(avctx,
+                                                                     pkt->data,
+                                                                     pkt->size);
+    if (reported_keyframe || inferred_keyframe)
         pkt->flags |= AV_PKT_FLAG_KEY;
+    if (inferred_keyframe && !reported_keyframe && !s->logged_inferred_keyframe) {
+        av_log(avctx, AV_LOG_INFO,
+               "Hardware encoder omitted sync flag; inferred key frame from NAL unit\n");
+        s->logged_inferred_keyframe = true;
+    }
     ret = 0;
 out:
     OH_VideoEncoder_FreeOutputBuffer(s->enc, output->index);
@@ -530,7 +623,10 @@ static int oh_encode_send_sw_frame(AVCodecContext *avctx, OHBufferQueueItem *inp
     OH_AVCodecBufferAttr attr = {
         .size = n,
         .offset = 0,
-        .pts = av_rescale_q(s->frame->pts, avctx->pkt_timebase,
+        /* AVFrame timestamps passed to an encoder use avctx->time_base.
+         * pkt_timebase is a decoder-only field. Using it here compressed
+         * a 24 fps frame interval from about 41 ms to about 41 us. */
+        .pts = av_rescale_q(s->frame->pts, avctx->time_base,
                             AV_TIME_BASE_Q),
         .flags = (s->frame->flags & AV_FRAME_FLAG_KEY)
                  ? AVCODEC_BUFFER_FLAGS_SYNC_FRAME : 0,

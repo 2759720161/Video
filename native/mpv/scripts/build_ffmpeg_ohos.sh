@@ -27,10 +27,25 @@ WRAPPER_DIR="${MPV_ROOT}/build/wrappers"
 mkdir -p "${WRAPPER_DIR}"
 export OHOS_NDK WRAPPER_DIR MPV_BUILD_TMPDIR="${BUILD_TMPDIR}"
 
-wsl_to_win() { wslpath -w "$1" 2>/dev/null || echo "$1"; }
+wsl_to_win() {
+    # Keep explicit /mnt/<drive>/ paths logical. wslpath resolves symlinks and
+    # junctions back to the DevEco Studio directory, whose space breaks the
+    # Windows clang command line used by the cross compiler.
+    if [[ "$1" =~ ^/mnt/([a-zA-Z])/(.*)$ ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        drive="${drive^^}"
+        rest="${rest//\\/}"
+        rest="${rest//\//\\}"
+        printf '%s' "${drive}:\\${rest}"
+    else
+        wslpath -w "$1" 2>/dev/null || echo "$1"
+    fi
+}
 
 OHOS_NDK_WIN=$(wsl_to_win "${OHOS_NDK}")
 SYSROOT_WIN=$(wsl_to_win "${OHOS_NDK}/sysroot")
+export OHOS_NDK_WIN_OVERRIDE="${OHOS_NDK_WIN}"
 
 
 CC="${OHOS_NDK}/llvm/bin/clang.exe"
@@ -108,7 +123,7 @@ bash ./configure \
     --enable-protocol=file,http,https,hls,crypto,pipe,tls \
     --enable-demuxer=matroska,mov,flv,hls,mp4,ass,srt,webvtt \
     --enable-decoder=h264,hevc,aac,ac3,eac3,opus,flac,vp8,vp9,av1,ass,srt,subrip,webvtt \
-    --enable-encoder=aac,opus,flac,ass,srt \
+    --enable-encoder=mpeg4,h264_oh,aac,opus,flac,ass,srt \
     --enable-parser=h264,hevc,aac,ac3,opus,vp9,flac \
     --enable-muxer=matroska,mp4 \
     --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc \
@@ -144,6 +159,12 @@ if ! grep -q "^CONFIG_HEVC_OH_DECODER=1" ffbuild/config.mak; then
     echo "CONFIG_HEVC_OH_DECODER=1" >> ffbuild/config.mak
 fi
 
+echo "Enabling OHCodec H.264 encoder in config.mak..."
+sed -i 's/^!CONFIG_H264_OH_ENCODER=.*/CONFIG_H264_OH_ENCODER=1/' ffbuild/config.mak
+if ! grep -q "^CONFIG_H264_OH_ENCODER=1" ffbuild/config.mak; then
+    echo "CONFIG_H264_OH_ENCODER=1" >> ffbuild/config.mak
+fi
+
 echo "Enabling OHCodec decoders in config.h..."
 for dec in CONFIG_H264_OH_DECODER CONFIG_HEVC_OH_DECODER; do
     if grep -q "#define ${dec} " config.h; then
@@ -152,6 +173,12 @@ for dec in CONFIG_H264_OH_DECODER CONFIG_HEVC_OH_DECODER; do
         echo "#define ${dec} 1" >> config.h
     fi
 done
+
+if grep -q "#define CONFIG_H264_OH_ENCODER " config.h; then
+    sed -i 's/#define CONFIG_H264_OH_ENCODER 0/#define CONFIG_H264_OH_ENCODER 1/' config.h
+else
+    echo "#define CONFIG_H264_OH_ENCODER 1" >> config.h
+fi
 
 echo "Adding OHCodec decoders to codec_list.c (using python)..."
 python3 -c "
@@ -162,6 +189,8 @@ if 'ff_h264_oh_decoder' not in content:
     content = content.replace('&ff_h264_decoder,', '&ff_h264_decoder,\n    &ff_h264_oh_decoder,')
 if 'ff_hevc_oh_decoder' not in content:
     content = content.replace('&ff_hevc_decoder,', '&ff_hevc_decoder,\n    &ff_hevc_oh_decoder,')
+if 'ff_h264_oh_encoder' not in content:
+    content = content.replace('&ff_mpeg4_encoder,', '&ff_mpeg4_encoder,\n    &ff_h264_oh_encoder,')
 with open('libavcodec/codec_list.c', 'w') as f:
     f.write(content)
 "
@@ -181,6 +210,13 @@ for dec in CONFIG_H264_OH_DECODER CONFIG_HEVC_OH_DECODER; do
         fi
     fi
 done
+if [ -f config_components.h ]; then
+    if grep -q "#define CONFIG_H264_OH_ENCODER " config_components.h; then
+        sed -i 's/#define CONFIG_H264_OH_ENCODER 0/#define CONFIG_H264_OH_ENCODER 1/' config_components.h
+    else
+        echo "#define CONFIG_H264_OH_ENCODER 1" >> config_components.h
+    fi
+fi
 
 echo "Building FFmpeg (10-30 min)..."
 make -j${JOBS}
@@ -189,10 +225,11 @@ echo "Manually compiling hwcontext_oh.o and adding to libavutil.a..."
 "${CC_WRAPPER}" -fPIC -O2 -flto -c -I. -Ilibavutil -o libavutil/hwcontext_oh.o libavutil/hwcontext_oh.c
 "${AR}" rcs libavutil/libavutil.a libavutil/hwcontext_oh.o
 
-echo "Manually compiling ohcodec.o and ohdec.o and adding to libavcodec.a..."
+echo "Manually compiling ohcodec.o, ohdec.o and ohenc.o and adding to libavcodec.a..."
 "${CC_WRAPPER}" -fPIC -O2 -c -I. -Ilibavcodec -Ilibavutil -o libavcodec/ohcodec.o libavcodec/ohcodec.c
 "${CC_WRAPPER}" -fPIC -O2 -c -I. -Ilibavcodec -Ilibavutil -o libavcodec/ohdec.o libavcodec/ohdec.c
-"${AR}" rcs libavcodec/libavcodec.a libavcodec/ohcodec.o libavcodec/ohdec.o
+"${CC_WRAPPER}" -fPIC -O2 -c -I. -Ilibavcodec -Ilibavutil -o libavcodec/ohenc.o libavcodec/ohenc.c
+"${AR}" rcs libavcodec/libavcodec.a libavcodec/ohcodec.o libavcodec/ohdec.o libavcodec/ohenc.o
 
 echo "Installing FFmpeg (manual copy)..."
 mkdir -p "${INSTALL_PREFIX}/lib" "${INSTALL_PREFIX}/include"

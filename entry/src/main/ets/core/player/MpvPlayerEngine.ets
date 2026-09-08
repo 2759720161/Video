@@ -14,6 +14,7 @@ const MPV_EVENT_FILE_LOADED = 8
 const MPV_EVENT_END_FILE = 7
 const MPV_EVENT_VIDEO_RECONFIG = 17
 const MPV_EVENT_PROPERTY_CHANGE = 22
+const EOF_COMPLETION_TOLERANCE_MS = 500
 const VIDEO_SIZE_POLL_DELAYS_MS: number[] = [80, 160, 320, 640, 1000, 1500, 2000]
 
 interface MpvNapiInterface {
@@ -117,6 +118,12 @@ export class MpvPlayerEngine implements IPlayerEngine {
   private videoSizePollTimer: number = -1
   private videoSizePollAttempt: number = 0
   private isAwaitingFileLoaded: boolean = false
+  private pendingFileLoadedSeekMs: number = 0
+  private pendingPauseAfterFileLoaded: boolean = false
+  private pendingReloadUrl: string = ''
+  private isStoppingForReload: boolean = false
+  private isReloadLoadSubmitted: boolean = false
+  private hasLoadedFile: boolean = false
   private hwdecMode: string = 'auto'
   private hlsAdFilterEnabled: boolean = true
   private segAllowImgEnabled: boolean = true
@@ -214,6 +221,8 @@ export class MpvPlayerEngine implements IPlayerEngine {
     this.clearVideoSizePoll()
     this.isReleasing = false
     this.resetState()
+    this.pendingFileLoadedSeekMs = Math.max(0, options.startPositionMs)
+    this.pendingPauseAfterFileLoaded = false
     this.state.stateName = 'creating'
     this.notifyStateChange()
 
@@ -285,9 +294,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
 
       const loadUrl = this.resolveMpvLoadUrl(options.url, options.isLocalFile)
       if (loadUrl.length > 0) {
-        // The resume position is configured through the `start` property in
-        // applyMpvOptions. Passing `start=...` as a loadfile argument makes
-        // libmpv parse it as the command index and rejects the command.
+        // Resume is applied asynchronously after FILE_LOADED. Updating mpv's
+        // runtime `start` option while another decoder is active can stall the
+        // core queue on this HarmonyOS build.
         const loadArgs: string[] = ['loadfile', loadUrl, 'replace']
         this.loadfileStartedAtMs = Date.now()
         this.isAwaitingFileLoaded = true
@@ -330,23 +339,46 @@ export class MpvPlayerEngine implements IPlayerEngine {
       return
     }
     try {
-      const startValue = options.startPositionMs > 0 ? String(options.startPositionMs / 1000) : '0'
-      const startErr = napi.nativeSetProperty(this.ctxId, 'start', startValue)
-      if (startErr < 0) {
-        logger.warn('mpv reload start option failed: value=%{public}s err=%{public}d', startValue, startErr)
-      }
       this.latestTracks = []
-      this.loadfileStartedAtMs = Date.now()
       this.isAwaitingFileLoaded = true
+      this.pendingReloadUrl = loadUrl
       logger.warn('CrashDiag mpv reload existing context: id=%{public}d ctxId=%{public}d urlHash=%{public}s ' +
-        'start=%{public}s', this.diagId, this.ctxId, this.activeUrlFingerprint, startValue)
+        'deferredSeekMs=%{public}d loaded=%{public}s stopping=%{public}s submitted=%{public}s',
+        this.diagId, this.ctxId, this.activeUrlFingerprint, this.pendingFileLoadedSeekMs,
+        String(this.hasLoadedFile), String(this.isStoppingForReload), String(this.isReloadLoadSubmitted))
 
-      // Both commands use the same mpv client queue, so pause is cleared before
-      // the replacement media starts without blocking ArkUI's main thread.
-      const playErr = napi.nativeCommandAsync(this.ctxId, ['set', 'pause', 'no'])
-      const loadErr = napi.nativeCommandAsync(this.ctxId, ['loadfile', loadUrl, 'replace'])
-      if (playErr < 0 || loadErr < 0) {
-        this.failPlayback('mpv reload enqueue failed: pause=' + String(playErr) + ', load=' + String(loadErr))
+      // Loading a replacement while OHCodec is still draining the previous
+      // file can block mpv_command() indefinitely, and a queued loadfile can
+      // remain behind that drain. Stop first; END_FILE is the hand-off point
+      // proving that the old decoder has released its resources.
+      if (this.hasLoadedFile || this.isReloadLoadSubmitted) {
+        if (!this.isStoppingForReload) {
+          this.isStoppingForReload = true
+          const stopErr = napi.nativeCommandAsync(this.ctxId, ['stop'])
+          if (stopErr < 0) {
+            this.failPlayback('mpv reload stop enqueue failed: ' + String(stopErr))
+            return
+          }
+          logger.warn('CrashDiag mpv reload stop enqueued: id=%{public}d elapsed=%{public}dms',
+            this.diagId, Date.now() - prepareStartMs)
+          // Queue loadfile immediately after stop on the same mpv client.
+          // Command ordering guarantees that the decoder stop is processed
+          // first, while not depending on END_FILE (which this backend can
+          // omit when playback is already sitting at EOF).
+          if (!this.submitPendingReload()) {
+            return
+          }
+        } else {
+          logger.info('CrashDiag mpv reload target updated while stop is pending: id=%{public}d', this.diagId)
+          const restopErr = napi.nativeCommandAsync(this.ctxId, ['stop'])
+          if (restopErr < 0 || !this.submitPendingReload()) {
+            if (restopErr < 0) {
+              this.failPlayback('mpv reload restop enqueue failed: ' + String(restopErr))
+            }
+            return
+          }
+        }
+      } else if (!this.submitPendingReload()) {
         return
       }
       this.state.stateName = 'preparing'
@@ -354,11 +386,28 @@ export class MpvPlayerEngine implements IPlayerEngine {
       this.state.completed = false
       this.notifyStateChange()
       this.startPrepareTimeout()
-      logger.warn('CrashDiag mpv reload enqueued: id=%{public}d elapsed=%{public}dms',
-        this.diagId, Date.now() - prepareStartMs)
     } catch (err) {
       this.failPlayback('mpv reload failed: ' + formatNativeError(err))
     }
+  }
+
+  private submitPendingReload(): boolean {
+    if (napi === null || this.ctxId < 0 || this.pendingReloadUrl.length === 0) {
+      this.failPlayback('mpv reload target is unavailable after decoder stop')
+      return false
+    }
+    const loadUrl = this.pendingReloadUrl
+    this.pendingReloadUrl = ''
+    this.loadfileStartedAtMs = Date.now()
+    const loadErr = napi.nativeCommandAsync(this.ctxId, ['loadfile', loadUrl, 'replace'])
+    if (loadErr < 0) {
+      this.failPlayback('mpv reload enqueue failed: load=' + String(loadErr))
+      return false
+    }
+    this.isReloadLoadSubmitted = true
+    logger.warn('CrashDiag mpv reload load enqueued after stop: id=%{public}d urlHash=%{public}s',
+      this.diagId, this.activeUrlFingerprint)
+    return true
   }
 
   play(): void {
@@ -367,6 +416,14 @@ export class MpvPlayerEngine implements IPlayerEngine {
       return
     }
     try {
+      if (this.isAwaitingFileLoaded) {
+        this.pendingPauseAfterFileLoaded = false
+        this.state.playing = false
+        this.state.stateName = 'preparing'
+        this.notifyStateChange()
+        logger.info('mpv play deferred until file-loaded: id=%{public}d', this.diagId)
+        return
+      }
       const startMs = Date.now()
       if (this.state.completed) {
         const seekErr = napi.nativeCommandAsync(this.ctxId, ['seek', '0', 'absolute'])
@@ -394,6 +451,14 @@ export class MpvPlayerEngine implements IPlayerEngine {
       return
     }
     try {
+      if (this.isAwaitingFileLoaded) {
+        this.pendingPauseAfterFileLoaded = true
+        this.state.playing = false
+        this.state.stateName = 'preparing'
+        this.notifyStateChange()
+        logger.info('mpv pause deferred until file-loaded: id=%{public}d', this.diagId)
+        return
+      }
       const startMs = Date.now()
       logger.warn('CrashDiag mpv pause begin: id=%{public}d ctxId=%{public}d', this.diagId, this.ctxId)
       const err = this.commandControlPause(true)
@@ -433,6 +498,16 @@ export class MpvPlayerEngine implements IPlayerEngine {
       return
     }
     try {
+      if (this.isAwaitingFileLoaded) {
+        this.pendingFileLoadedSeekMs = Math.max(0, positionMs)
+        this.state.positionMs = this.pendingFileLoadedSeekMs
+        this.state.completed = false
+        this.state.stateName = 'preparing'
+        this.notifyStateChange()
+        logger.info('mpv seek deferred until file-loaded: id=%{public}d position=%{public}dms',
+          this.diagId, this.pendingFileLoadedSeekMs)
+        return
+      }
       const positionSec = positionMs / 1000
       const resumeFromEof = this.state.completed || this.state.stateName === 'completed'
       // mpv_command() waits for the core thread to finish processing the
@@ -468,7 +543,11 @@ export class MpvPlayerEngine implements IPlayerEngine {
       return
     }
     try {
-      napi.nativeSetProperty(this.ctxId, 'speed', String(speed))
+      const result = napi.nativeCommandAsync(this.ctxId, ['set', 'speed', String(speed)])
+      if (result < 0) {
+        logger.warn('mpv async setSpeed enqueue failed: %{public}d', result)
+        return
+      }
       this.state.speed = speed
       this.notifyStateChange()
     } catch (_err) {
@@ -482,7 +561,11 @@ export class MpvPlayerEngine implements IPlayerEngine {
     }
     try {
       const volumePercent = Math.round(volume * 100)
-      napi.nativeSetProperty(this.ctxId, 'volume', String(volumePercent))
+      const result = napi.nativeCommandAsync(this.ctxId, ['set', 'volume', String(volumePercent)])
+      if (result < 0) {
+        logger.warn('mpv async setVolume enqueue failed: %{public}d', result)
+        return
+      }
       this.state.volume = volume
       this.notifyStateChange()
     } catch (_err) {
@@ -499,25 +582,25 @@ export class MpvPlayerEngine implements IPlayerEngine {
       const modeName = this.getAspectModeName(mode)
       const keepAspect = this.getMpvKeepAspectValue(mode)
       const panScan = mode === VideoAspectMode.cover ? '1.0' : '0.0'
-      const keepAspectErr = napi.nativeSetProperty(this.ctxId, 'keepaspect', keepAspect)
-      const panScanErr = napi.nativeSetProperty(this.ctxId, 'panscan', panScan)
+      // mpv_set_property_string is synchronous and can wait for the decoder
+      // thread during a hardware-decoder flush. This method is called by the
+      // fullscreen/layout timer on ArkUI's main thread, so enqueue both
+      // property updates instead of blocking the UI thread.
+      const keepAspectErr = napi.nativeCommandAsync(this.ctxId, ['set', 'keepaspect', keepAspect])
+      const panScanErr = napi.nativeCommandAsync(this.ctxId, ['set', 'panscan', panScan])
       if (keepAspectErr < 0 || panScanErr < 0) {
         logger.warn('mpv setAspectMode failed: mode=%{public}s, keepaspect=%{public}s/%{public}d, panscan=%{public}s/%{public}d',
           modeName, keepAspect, keepAspectErr, panScan, panScanErr)
         return
       }
       if (!this.state.playing && this.state.videoWidth > 0 && this.state.videoHeight > 0) {
-        // keepaspect/panscan 的相同值写入会被 mpv 合并，无法唤醒暂停状态下的 VO。
-        // window-scale 是 force_update 选项；将其写回当前值会触发 VO_OPTS_CHANGED，
-        // OHOS 后端据此读取新的 NativeWindow 尺寸并重绘缓存帧，不会 seek 或冲刷解码器。
-        const currentWindowScale = napi.nativeGetProperty(this.ctxId, 'window-scale')
-        const windowScale = currentWindowScale !== null && currentWindowScale.length > 0 ?
-          currentWindowScale : '1.0'
-        const redrawErr = napi.nativeSetProperty(this.ctxId, 'window-scale', windowScale)
+        // Avoid nativeGetProperty/nativeSetProperty here as both are
+        // synchronous. The surface/layout update will redraw the paused frame.
+        const redrawErr = napi.nativeCommandAsync(this.ctxId, ['set', 'window-scale', '1.0'])
         if (redrawErr < 0) {
           logger.warn('mpv paused surface redraw request failed: %{public}d', redrawErr)
         } else {
-          logger.info('mpv paused surface redraw requested without seek: window-scale=%{public}s', windowScale)
+          logger.info('mpv paused surface redraw requested without seek')
         }
       }
       this.pendingAspectMode = null
@@ -530,7 +613,7 @@ export class MpvPlayerEngine implements IPlayerEngine {
 
   async getVideoInfo(): Promise<VideoMediaInfo> {
     const info = new VideoMediaInfo()
-    if (!this.isInitialized || this.ctxId < 0 || napi === null) {
+    if (!this.isInitialized || this.ctxId < 0 || napi === null || this.isAwaitingFileLoaded) {
       return info
     }
 
@@ -572,7 +655,7 @@ export class MpvPlayerEngine implements IPlayerEngine {
   }
 
   async getTracks(): Promise<PlayerTrack[]> {
-    if (!this.isInitialized || this.ctxId < 0 || napi === null) {
+    if (!this.isInitialized || this.ctxId < 0 || napi === null || this.isAwaitingFileLoaded) {
       return []
     }
     try {
@@ -789,6 +872,12 @@ export class MpvPlayerEngine implements IPlayerEngine {
         logger.error('mpv destroy failed')
       }
     }
+    this.pendingFileLoadedSeekMs = 0
+    this.pendingPauseAfterFileLoaded = false
+    this.pendingReloadUrl = ''
+    this.isStoppingForReload = false
+    this.isReloadLoadSubmitted = false
+    this.hasLoadedFile = false
     this.resetState()
     logger.warn('CrashDiag mpv release end: id=%{public}d elapsed=%{public}dms',
       this.diagId, Date.now() - releaseStartMs)
@@ -813,13 +902,16 @@ export class MpvPlayerEngine implements IPlayerEngine {
 
     switch (event.eventId) {
       case MPV_EVENT_START_FILE:
+        this.hasLoadedFile = true
+        if (this.isReloadLoadSubmitted) {
+          this.isStoppingForReload = false
+        }
         this.state.stateName = 'preparing'
         this.state.playing = false
         this.notifyStateChange()
         logger.info('CrashDiag mpv event: id=%{public}d urlHash=%{public}s event=start-file elapsed=%{public}dms ' +
-          'error=%{public}d reason=%{public}d snapshot=%{public}s',
-          this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), event.errorCode, event.reason,
-          this.readMpvPlaybackSnapshot())
+          'error=%{public}d reason=%{public}d',
+          this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), event.errorCode, event.reason)
         logger.info('mpv event: start-file')
         break
 
@@ -828,16 +920,39 @@ export class MpvPlayerEngine implements IPlayerEngine {
         break
 
       case MPV_EVENT_FILE_LOADED:
+        this.hasLoadedFile = true
+        this.isReloadLoadSubmitted = false
+        this.isStoppingForReload = false
         this.clearPrepareTimeout()
-        this.state.stateName = 'playing'
-        this.state.playing = true
+        const deferredSeekMs = this.pendingFileLoadedSeekMs
+        this.pendingFileLoadedSeekMs = 0
+        if (deferredSeekMs > 0) {
+          const seekErr = napi !== null
+            ? napi.nativeCommandAsync(this.ctxId, ['seek', String(deferredSeekMs / 1000), 'absolute']) : -1
+          if (seekErr < 0) {
+            logger.warn('mpv deferred seek enqueue failed: position=%{public}dms err=%{public}d',
+              deferredSeekMs, seekErr)
+          } else {
+            this.state.positionMs = deferredSeekMs
+          }
+        }
+        const pauseAfterLoad = this.pendingPauseAfterFileLoaded
+        this.pendingPauseAfterFileLoaded = false
+        const pauseErr = napi !== null
+          ? napi.nativeCommandAsync(this.ctxId, ['set', 'pause', pauseAfterLoad ? 'yes' : 'no']) : -1
+        if (pauseErr < 0) {
+          logger.warn('mpv post-load pause enqueue failed: paused=%{public}s err=%{public}d',
+            String(pauseAfterLoad), pauseErr)
+        }
+        this.state.stateName = pauseAfterLoad ? 'paused' : 'playing'
+        this.state.playing = !pauseAfterLoad
         this.clearVideoSizePoll()
         this.scheduleVideoSizePoll()
         this.notifyStateChange()
         logger.info('CrashDiag mpv event: id=%{public}d urlHash=%{public}s event=file-loaded elapsed=%{public}dms ' +
-          'loadfileElapsed=%{public}dms snapshot=%{public}s',
+          'loadfileElapsed=%{public}dms deferredSeekMs=%{public}d paused=%{public}s',
           this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), this.elapsedSinceLoadfile(),
-          this.readMpvPlaybackSnapshot())
+          deferredSeekMs, String(pauseAfterLoad))
         logger.info('mpv event: file-loaded')
         break
 
@@ -849,6 +964,17 @@ export class MpvPlayerEngine implements IPlayerEngine {
         break
 
       case MPV_EVENT_END_FILE:
+        this.hasLoadedFile = false
+        this.isReloadLoadSubmitted = false
+        if (this.isStoppingForReload) {
+          this.isStoppingForReload = false
+          logger.info('CrashDiag mpv reload old decoder stopped: id=%{public}d reason=%{public}d',
+            this.diagId, event.reason)
+          if (this.pendingReloadUrl.length > 0) {
+            this.submitPendingReload()
+          }
+          break
+        }
         // libmpv reports the replaced file as END_FILE/STOP (reason=2). It is
         // not the end of the incoming target and must not clear that target's
         // file-loaded guard or prepare timeout.
@@ -860,9 +986,8 @@ export class MpvPlayerEngine implements IPlayerEngine {
         this.clearPrepareTimeout()
         this.clearVideoSizePoll()
         logger.info('CrashDiag mpv event: id=%{public}d urlHash=%{public}s event=end-file elapsed=%{public}dms ' +
-          'error=%{public}d reason=%{public}d snapshot=%{public}s',
-          this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), event.errorCode, event.reason,
-          this.readMpvPlaybackSnapshot())
+          'error=%{public}d reason=%{public}d',
+          this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), event.errorCode, event.reason)
         if (event.reason === 0) {
           this.state.completed = true
           this.state.playing = false
@@ -932,6 +1057,18 @@ export class MpvPlayerEngine implements IPlayerEngine {
         }
         if (event.propertyValueDouble >= 0) {
           this.state.positionMs = Math.max(0, Math.round(event.propertyValueDouble * 1000))
+          // The HarmonyOS GPU/OHCodec backend can hold the final frame without
+          // emitting eof-reached or END_FILE. Convert the final time-pos sample
+          // into one completion event so LocalPlayerPage can advance the queue.
+          if (!this.state.completed && this.state.playing && this.state.durationMs > 0 &&
+            this.state.positionMs >= this.state.durationMs - EOF_COMPLETION_TOLERANCE_MS) {
+            this.state.positionMs = this.state.durationMs
+            this.state.completed = true
+            this.state.playing = false
+            this.state.stateName = 'completed'
+            logger.info('CrashDiag mpv inferred EOF from time-pos: id=%{public}d position=%{public}d duration=%{public}d',
+              this.diagId, this.state.positionMs, this.state.durationMs)
+          }
         }
         break
 
@@ -977,9 +1114,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
         const buffering = event.propertyValueDouble > 0
         if (buffering !== this.state.buffering) {
           logger.info('CrashDiag mpv buffering: id=%{public}d urlHash=%{public}s buffering=%{public}s ' +
-            'value=%{public}f elapsed=%{public}dms snapshot=%{public}s',
+            'value=%{public}f elapsed=%{public}dms',
             this.diagId, this.activeUrlFingerprint, String(buffering), event.propertyValueDouble,
-            this.elapsedSincePrepare(), this.readMpvPlaybackSnapshot())
+            this.elapsedSincePrepare())
         }
         this.state.buffering = buffering
         break
@@ -1033,8 +1170,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
           effectiveHwdec, hwdecErr)
       }
       napi.nativeSetProperty(this.ctxId, 'keepaspect', 'yes')
-      // Keep the demuxer/video output alive at EOF so a backward seek can
-      // render immediately instead of operating on an already-unloaded file.
+      // Keep the final decoder/VO frame alive so seeking backward from EOF can
+      // resume video immediately. EOF completion is also inferred from the
+      // final time-pos sample because this backend can omit END_FILE here.
       napi.nativeSetProperty(this.ctxId, 'keep-open', 'yes')
 
       // Preserve authored ASS/SSA styles and enable libass' complete shaping
@@ -1077,8 +1215,6 @@ export class MpvPlayerEngine implements IPlayerEngine {
       let userAgentErr = 0
       let proxyErr = 0
       let headerErr = 0
-      let startErr = 0
-      let startValue = ''
       if (options.referer.length > 0) {
         referrerErr = napi.nativeSetProperty(this.ctxId, 'referrer', options.referer)
       }
@@ -1113,19 +1249,15 @@ export class MpvPlayerEngine implements IPlayerEngine {
             headerParts.length, this.describeHeaderNames(headerParts))
         }
       }
-      if (options.startPositionMs > 0) {
-        startValue = String(options.startPositionMs / 1000)
-        startErr = napi.nativeSetProperty(this.ctxId, 'start', startValue)
-      }
       logger.info('CrashDiag mpv options result: id=%{public}d urlHash=%{public}s msgLevelErr=%{public}d ' +
         'referrer=%{public}s/%{public}d userAgent=%{public}s/%{public}d proxy=%{public}s/%{public}d ' +
-        'headers=%{public}s/%{public}d start=%{public}s/%{public}d',
+        'headers=%{public}s/%{public}d deferredSeekMs=%{public}d',
         this.diagId, this.activeUrlFingerprint, msgLevelErr,
         options.referer.length > 0 ? 'set' : 'empty', referrerErr,
         options.userAgent.length > 0 ? 'set' : 'empty', userAgentErr,
         options.proxy.length > 0 ? 'set' : 'empty', proxyErr,
         Object.keys(options.headers).length > 0 ? 'set' : 'empty', headerErr,
-        startValue.length > 0 ? startValue : 'empty', startErr)
+        this.pendingFileLoadedSeekMs)
     } catch (_err) {
       logger.warn('applyMpvOptions partially failed (non-fatal)')
     }
@@ -1273,8 +1405,7 @@ export class MpvPlayerEngine implements IPlayerEngine {
         return
       }
       if (this.videoSizePollAttempt >= VIDEO_SIZE_POLL_DELAYS_MS.length) {
-        logger.warn('CrashDiag mpv video size unavailable after retries, keeping fallback layout: %{public}s',
-          this.readMpvPlaybackSnapshot())
+        logger.warn('CrashDiag mpv video size unavailable after retries, keeping fallback layout')
         return
       }
       const nextDelay = VIDEO_SIZE_POLL_DELAYS_MS[this.videoSizePollAttempt]
@@ -1357,10 +1488,14 @@ export class MpvPlayerEngine implements IPlayerEngine {
   private failPlayback(errorMsg: string): void {
     this.clearPrepareTimeout()
     this.clearVideoSizePoll()
-    logger.error('mpv playback failed: id=%{public}d urlHash=%{public}s elapsed=%{public}dms ' +
-      'error=%{public}s snapshot=%{public}s',
-      this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), errorMsg,
-      this.readMpvPlaybackSnapshot())
+    this.pendingFileLoadedSeekMs = 0
+    this.pendingPauseAfterFileLoaded = false
+    this.pendingReloadUrl = ''
+    this.isStoppingForReload = false
+    this.isReloadLoadSubmitted = false
+    this.hasLoadedFile = false
+    logger.error('mpv playback failed: id=%{public}d urlHash=%{public}s elapsed=%{public}dms error=%{public}s',
+      this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), errorMsg)
     this.state.stateName = 'error'
     this.state.error = errorMsg
     this.state.playing = false
@@ -1375,9 +1510,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
       if (this.isAwaitingFileLoaded && this.isInitialized && !this.isReleasing) {
         this.isAwaitingFileLoaded = false
         logger.error('mpv prepare timeout: id=%{public}d urlHash=%{public}s timeoutMs=%{public}d ' +
-          'elapsed=%{public}dms loadfileElapsed=%{public}dms snapshot=%{public}s',
+          'elapsed=%{public}dms loadfileElapsed=%{public}dms',
           this.diagId, this.activeUrlFingerprint, this.prepareTimeoutMs, this.elapsedSincePrepare(),
-          this.elapsedSinceLoadfile(), this.readMpvPlaybackSnapshot())
+          this.elapsedSinceLoadfile())
         this.failPlayback('mpv prepare timeout')
       }
     }, this.prepareTimeoutMs)
@@ -1492,21 +1627,4 @@ export class MpvPlayerEngine implements IPlayerEngine {
     return names.length > 0 ? names.join('|') : '<unsupported>'
   }
 
-  private readMpvPlaybackSnapshot(): string {
-    if (this.ctxId < 0 || napi === null) {
-      return 'ctx=unavailable'
-    }
-    const names = ['demuxer', 'duration', 'time-pos', 'video-format', 'audio-format',
-      'cache-buffering-state', 'paused-for-cache', 'eof-reached']
-    const parts: string[] = []
-    for (let i = 0; i < names.length; i++) {
-      try {
-        const value = napi.nativeGetProperty(this.ctxId, names[i])
-        parts.push(names[i] + '=' + (value !== null && value.length > 0 ? value : '<null>'))
-      } catch (_err) {
-        parts.push(names[i] + '=<error>')
-      }
-    }
-    return parts.join('|')
-  }
 }

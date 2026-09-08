@@ -28,7 +28,10 @@ fi
     -o libavcodec/ohcodec.o libavcodec/ohcodec.c
 "${CCW}" -fPIC -O2 -c -I. -Ilibavcodec -Ilibavutil \
     -o libavcodec/ohdec.o libavcodec/ohdec.c
-"${ARW}" rcs libavcodec/libavcodec.a libavcodec/ohcodec.o libavcodec/ohdec.o
+"${CCW}" -fPIC -O2 -c -I. -Ilibavcodec -Ilibavutil \
+    -o libavcodec/ohenc.o libavcodec/ohenc.c
+"${ARW}" rcs libavcodec/libavcodec.a \
+    libavcodec/ohcodec.o libavcodec/ohdec.o libavcodec/ohenc.o
 
 mkdir -p "${PREFIX}/lib" "${PREFIX}/include"
 for lib in libavutil libswresample libswscale libavcodec libavformat libavfilter; do

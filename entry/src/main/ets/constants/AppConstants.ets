@@ -1,7 +1,7 @@
 import { APP_VERSION as GENERATED_APP_VERSION } from './AppVersion'
 
 export class AppConstants {
-  static readonly APP_NAME: string = '本地播放器'
+  static readonly APP_NAME: string = '影匣'
   static readonly APP_VERSION: string = GENERATED_APP_VERSION
   static readonly DOMAIN: number = 0x0000
   static readonly LOG_TAG: string = 'LocalPlayer'

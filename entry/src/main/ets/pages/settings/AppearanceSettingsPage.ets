@@ -53,13 +53,13 @@ struct AppearanceSettingsPage {
       Column() {
         Row() {
           this.Icon($r('sys.symbol.moon'))
-          this.Title('深色模式', '跟随系统或手动切换')
+          this.Title('深色模式')
           this.ThemePicker()
         }.width('100%').height(64).padding({ left: 16, right: 16 })
         Divider().color($r('app.color.divider_color')).margin({ left: 62 })
         Row() {
           this.Icon($r('sys.symbol.wand_and_stars'))
-          this.Title('沉浸光感等级', '调整 HDS 材质光感强度')
+          this.Title('沉浸光感等级')
           this.MaterialPicker()
         }.width('100%').height(64).padding({ left: 16, right: 16 })
       }.width('100%').borderRadius(12).clip(true).backgroundColor($r('app.color.card_background'))
@@ -73,14 +73,14 @@ struct AppearanceSettingsPage {
       Column() {
         Row() {
           this.Icon($r('sys.symbol.arrow_down_right_and_arrow_up_left'))
-          this.Title('滑动隐藏底栏', '下滑时跟手收起底部页签，上滑时恢复')
+          this.Title('滑动隐藏底栏')
           Toggle({ type: ToggleType.Switch, isOn: this.bottomTabAutoHide }).selectedColor($r('app.color.accent_blue'))
             .onChange((value: boolean) => this.setBottomTabAutoHide(value))
         }.width('100%').height(64).padding({ left: 16, right: 16 })
         Divider().color($r('app.color.divider_color')).margin({ left: 62 })
         Row() {
           this.Icon($r('sys.symbol.layer'))
-          this.Title('底栏显示动画', '点击底栏时显示 HDS 动效')
+          this.Title('底栏显示动画')
           Toggle({ type: ToggleType.Switch, isOn: this.bottomTabAnimation }).selectedColor($r('app.color.accent_blue'))
             .onChange((value: boolean) => this.setBottomTabAnimation(value))
         }.width('100%').height(64).padding({ left: 16, right: 16 })
@@ -93,10 +93,9 @@ struct AppearanceSettingsPage {
     Text(title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary')).width('100%').padding({ left: 4, top: 12, bottom: 8 })
   }
   @Builder private Icon(icon: Resource): void { SymbolGlyph(icon).fontSize(24).fontColor([$r('app.color.accent_blue')]).width(34).margin({ right: 12 }) }
-  @Builder private Title(title: string, summary: string): void {
+  @Builder private Title(title: string): void {
     Column() {
       Text(title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
-      Text(summary).fontSize(13).fontColor($r('app.color.text_secondary')).margin({ top: 3 })
     }.layoutWeight(1).alignItems(HorizontalAlign.Start)
   }
   @Builder private ThemePicker(): void {

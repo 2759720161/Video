@@ -7,6 +7,7 @@ import { DanmakuManager } from '../../core/danmaku/DanmakuManager'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { DanmakuFileParser, LocalDanmakuParseResult } from '../../core/danmaku/DanmakuFileParser'
 import { LocalFilePicker, LocalFileResult } from '../../services/LocalFilePicker'
+import { UserDownloadFolder } from '../../services/UserDownloadFolder'
 import { LocalVideoThumbnailStore } from '../../services/LocalVideoThumbnailStore'
 import { DanmakuSettingsPanelContent } from '../../components/player/DanmakuSettingsPanel'
 import { DanmakuSettingsSidePanel } from '../../components/player/DanmakuSettingsSidePanel'
@@ -24,10 +25,8 @@ import { router, window, PiPWindow, promptAction } from '@kit.ArkUI'
 import { KeyCode } from '@ohos.multimodalInput.keyCode'
 import { audio } from '@kit.AudioKit'
 import { common } from '@kit.AbilityKit'
-import {
-  createConfiguredImmersiveMaterial,
-  createThickImmersiveMaterial,
-} from '../../utils/ImmersiveMaterial'
+import { EmbyPlaybackContext } from '../../models/EmbyModels'
+import { EmbyPlaybackReporter } from '../../services/EmbyPlaybackReporter'
 import {
   PLAYER_AUTO_PIP_DEFAULT,
   PREFS_KEY_PLAYER_AUTO_PIP
@@ -38,9 +37,15 @@ import {
 } from '../../utils/PlayerAutoNext'
 import {
   PLAYER_DEFAULT_SPEED,
+  PLAYER_OPEN_ORIENTATION_DEFAULT,
+  PLAYER_OPEN_ORIENTATION_LANDSCAPE,
+  PLAYER_OPEN_ORIENTATION_PORTRAIT,
+  PLAYER_OPEN_ORIENTATION_SYSTEM,
   PLAYER_SEEK_SECONDS_DEFAULT,
   PREFS_KEY_PLAYER_DEFAULT_SPEED,
+  PREFS_KEY_PLAYER_OPEN_ORIENTATION,
   PREFS_KEY_PLAYER_SEEK_SECONDS,
+  normalizePlayerOpenOrientation,
   normalizePlayerSpeed,
   normalizeSeekSeconds
 } from '../../utils/PlayerPlaybackPreferences'
@@ -64,6 +69,7 @@ import {
 const logger = new Logger('LocalPlayerPage')
 
 const HISTORY_SAVE_INTERVAL_MS: number = 5000
+const EMBY_PROGRESS_INTERVAL_MS: number = 10000
 const EXTERNAL_SUBTITLE_TICK_MS: number = 100
 const SUBTITLE_MENU_COMMIT_DELAY_MS: number = 20
 const PLAYER_LIVE_URL_KEY: string = 'playerLivePlaybackUrl'
@@ -107,6 +113,7 @@ struct LocalPlayerPage {
   private readonly playerKeepScreenOn: boolean = true
   @StorageLink(PREFS_KEY_PLAYER_DEFAULT_SPEED) playerDefaultSpeed: number = PLAYER_DEFAULT_SPEED
   @StorageLink(PREFS_KEY_PLAYER_SEEK_SECONDS) playerSeekSeconds: number = PLAYER_SEEK_SECONDS_DEFAULT
+  @StorageLink(PREFS_KEY_PLAYER_OPEN_ORIENTATION) playerOpenOrientation: string = PLAYER_OPEN_ORIENTATION_DEFAULT
   @StorageLink(PREFS_KEY_SUBTITLE_ENABLED) subtitleEnabled: boolean = SUBTITLE_ENABLED_DEFAULT
   @StorageLink(PREFS_KEY_SUBTITLE_FONT_SIZE) subtitleFontSize: number = SUBTITLE_FONT_SIZE_DEFAULT
   @StorageLink(PREFS_KEY_SUBTITLE_FONT_BOLD) subtitleFontBold: boolean = SUBTITLE_FONT_BOLD_DEFAULT
@@ -170,6 +177,7 @@ struct LocalPlayerPage {
   private pendingPageBrightness: number = -1
   private playerLayoutSyncTimer: number = -1
   private fullscreenTransitionTimer: number = -1
+  private followSystemOrientationOnOpen: boolean = false
   private lastVolumeApplyMs: number = 0
   private pendingVolumeValue: number = -1
   private externalSubtitleTimer: number = -1
@@ -188,6 +196,13 @@ struct LocalPlayerPage {
   private historyDurationMs: number = 0
   private lastKnownPositionMs: number = 0
   private videoFileSize: number = 0
+  private isLocalSource: boolean = true
+  private sourceType: string = 'local'
+  private embyPlaybackJson: string = ''
+  private embyReporter: EmbyPlaybackReporter | null = null
+  private embyPlaybackStarted: boolean = false
+  private lastEmbyProgressMs: number = 0
+  private lastEmbyPlayingState: boolean = false
   private localVideoHistoryStore: LocalVideoHistoryStore = new LocalVideoHistoryStore()
   private readonly FULLSCREEN_ROTATION_SETTLE_MS: number = 180
   private isPageAlive: boolean = false
@@ -208,6 +223,7 @@ struct LocalPlayerPage {
   private tracksLoadedForUrl: string = ''
   private videoInfoLoadedForUrl: string = ''
   private completionHandledForUrl: string = ''
+  private siblingQueueRefreshUri: string = ''
   @State isAnimatingFullscreen: boolean = false
   @State suppressControlAnimation: boolean = false
   @State hideBottomControlsForFullscreenTransition: boolean = false
@@ -228,10 +244,16 @@ struct LocalPlayerPage {
       const historyDurationMs = params['historyDurationMs']
       const playlistJson = params['playlistJson']
       const queueIndex = params['queueIndex']
+      const isLocalFile = params['isLocalFile']
+      const sourceType = params['sourceType']
+      const embyPlaybackJson = params['embyPlaybackJson']
 
       if (typeof videoUri === 'string') this.videoUri = videoUri
       if (typeof videoFileName === 'string') this.videoFileName = videoFileName
       if (typeof videoFileSize === 'number') this.videoFileSize = videoFileSize
+      if (typeof isLocalFile === 'boolean') this.isLocalSource = isLocalFile
+      if (typeof sourceType === 'string') this.sourceType = sourceType
+      if (typeof embyPlaybackJson === 'string') this.embyPlaybackJson = embyPlaybackJson
       if (typeof historyPositionMs === 'number') {
         this.historySeekMs = historyPositionMs
       }
@@ -244,6 +266,11 @@ struct LocalPlayerPage {
       if (typeof queueIndex === 'number' && queueIndex >= 0 && queueIndex < this.playbackQueue.length) {
         this.currentQueueIndex = queueIndex
       }
+    }
+
+    const embyContext = EmbyPlaybackContext.decode(this.embyPlaybackJson)
+    if (this.sourceType === 'emby' && embyContext !== null) {
+      this.embyReporter = new EmbyPlaybackReporter(embyContext)
     }
 
     if (this.historyDurationMs <= 0 && this.currentQueueIndex >= 0 &&
@@ -262,10 +289,13 @@ struct LocalPlayerPage {
     }
 
     if (this.videoUri.length > 0) {
-      this.ensurePlaybackQueueForCurrentVideo()
+      if (this.isLocalSource) {
+        this.ensurePlaybackQueueForCurrentVideo()
+        this.refreshSameDirectoryPlaybackQueue()
+      }
       const options = new PlaybackOptions()
       options.url = this.videoUri
-      options.isLocalFile = true
+      options.isLocalFile = this.isLocalSource
       options.localFileSize = this.videoFileSize
       if (this.historySeekMs > 0) {
         options.startPositionMs = this.historySeekMs
@@ -274,7 +304,7 @@ struct LocalPlayerPage {
       }
       this.playbackOptions = options
       this.syncPlaybackSessionMedia()
-      this.enterFullscreenOnOpen()
+      this.applyOpenOrientationOnOpen()
     }
 
     this.startAutoHideTimer()
@@ -314,6 +344,13 @@ struct LocalPlayerPage {
       logger.info('LocalPlayerPage aboutToDisappear skipped release for PiP')
       return
     }
+    this.stopEmbyPlaybackReport()
+    // Start reading the latest engine position before releasing the retained
+    // player session; otherwise the exit-frame cover may be generated from a
+    // stale position after the engine has already been released.
+    if (this.videoUri.length > 0) {
+      this.saveLocalHistory(true)
+    }
     releaseRetainedPlayerSession()
     this.playbackSessionStore.reset('local-player')
     this.isPageAlive = false
@@ -321,15 +358,14 @@ struct LocalPlayerPage {
     this.clearHudTimer()
     this.clearVolumeApplyTimer()
     this.stopExternalSubtitleClock()
-    if (this.videoUri.length > 0) {
-      this.saveLocalHistory(true)
-    }
     this.stopPlaybackBeforeLeaving()
     if (this.danmakuManager !== null) {
       this.danmakuManager.release()
       this.danmakuManager = null
     }
-    if (this.isFullScreen) {
+    if (this.isFullScreen || this.followSystemOrientationOnOpen ||
+      normalizePlayerOpenOrientation(this.playerOpenOrientation) === PLAYER_OPEN_ORIENTATION_PORTRAIT) {
+      this.followSystemOrientationOnOpen = false
       this.setFullScreenMode(false)
     }
     this.pipManager.destroyPiP()
@@ -470,6 +506,9 @@ struct LocalPlayerPage {
     params['videoFileName'] = this.videoFileName
     params['videoFileSize'] = this.videoFileSize
     params['historyPositionMs'] = this.positionMs
+    params['isLocalFile'] = this.isLocalSource
+    params['sourceType'] = this.sourceType
+    params['embyPlaybackJson'] = this.embyPlaybackJson
     return params
   }
 
@@ -481,7 +520,7 @@ struct LocalPlayerPage {
     cloned.userAgent = this.playbackOptions.userAgent
     cloned.proxy = this.playbackOptions.proxy
     cloned.streamMetadata = this.playbackOptions.streamMetadata
-    cloned.isLocalFile = true
+    cloned.isLocalFile = this.playbackOptions.isLocalFile
     cloned.localFileSize = this.playbackOptions.localFileSize
     const keys = Object.keys(this.playbackOptions.headers)
     for (let i = 0; i < keys.length; i++) {
@@ -1406,7 +1445,6 @@ struct LocalPlayerPage {
     .clip(true)
     .backgroundColor($r('app.color.speed_menu_surface'))
     .backgroundBlurStyle(BlurStyle.BACKGROUND_THICK)
-    .systemMaterial(createThickImmersiveMaterial())
     .border({ width: 0.5, color: $r('app.color.category_menu_divider') })
       .shadow({ radius: 20, color: $r('app.color.shadow_surface'), offsetY: 8 })
     }
@@ -1498,7 +1536,6 @@ struct LocalPlayerPage {
       .clip(true)
       .backgroundColor($r('app.color.speed_menu_surface'))
       .backgroundBlurStyle(BlurStyle.BACKGROUND_THICK)
-      .systemMaterial(createThickImmersiveMaterial())
       .border({ width: 0.5, color: $r('app.color.category_menu_divider') })
       .shadow({ radius: 20, color: $r('app.color.shadow_surface'), offsetY: 8 })
     }
@@ -2219,7 +2256,6 @@ struct LocalPlayerPage {
       .borderRadius(16)
       .backgroundColor($r('app.color.speed_menu_surface'))
       .backgroundBlurStyle(BlurStyle.BACKGROUND_THICK)
-      .systemMaterial(createThickImmersiveMaterial())
       .border({ width: 0.5, color: $r('app.color.category_menu_divider') })
       .shadow({ radius: 20, color: $r('app.color.shadow_surface'), offsetY: 8 })
       .margin({ right: 12, bottom: this.isFullScreen ? this.bottomSafeHeight + 74 : this.bottomSafeHeight + 66 })
@@ -2341,7 +2377,6 @@ struct LocalPlayerPage {
       .padding({ left: 18, right: 18, top: 12, bottom: this.bottomSafeHeight + 18 })
       .borderRadius({ topLeft: 18, topRight: 18 })
       .backgroundColor($r('app.color.card_background'))
-      .systemMaterial(createConfiguredImmersiveMaterial())
       .shadow({ radius: 20, color: $r('app.color.shadow_surface'), offsetY: -6 })
     }
     .width('100%')
@@ -2432,7 +2467,6 @@ struct LocalPlayerPage {
       .borderRadius({ topLeft: 18, topRight: 18 })
       .clip(true)
       .backgroundColor($r('app.color.page_background'))
-      .systemMaterial(createConfiguredImmersiveMaterial())
       .shadow({ radius: 20, color: $r('app.color.shadow_surface'), offsetY: -6 })
     }
     .width('100%')
@@ -2620,6 +2654,7 @@ struct LocalPlayerPage {
     this.volume = state.volume
     this.speed = state.speed
     this.speedLabel = this.speed.toFixed(this.speed % 1 === 0 ? 0 : 2) + 'x'
+    this.reportEmbyPlaybackState(state)
     if (this.shouldSyncPlaybackSessionState(state)) {
       this.playbackSessionStore.updatePlayerState(state, 'local-player')
     }
@@ -2655,8 +2690,9 @@ struct LocalPlayerPage {
 
     if (state.error.length > 0) {
       logger.warn('Local playback error: %{public}s', state.error)
-      this.playbackErrorText = '本地文件访问失败，请重新授权或重新选择'
-      this.showHudText('本地文件访问失败')
+      this.playbackErrorText = this.isLocalSource ? '本地文件访问失败，请重新授权或重新选择' :
+        '远程视频加载失败，请检查 Emby 连接'
+      this.showHudText(this.isLocalSource ? '本地文件访问失败' : '远程视频加载失败')
     } else if (this.playbackErrorText.length > 0 && state.playing) {
       this.playbackErrorText = ''
     }
@@ -2668,7 +2704,10 @@ struct LocalPlayerPage {
       // and load the media at EOF again.
       this.clearLivePlaybackPosition()
       this.saveLocalHistory()
-      if (this.playerAutoNext) {
+      this.stopEmbyPlaybackReport()
+      logger.info('本地视频播放完成: name=%{public}s autoNext=%{public}s queue=%{public}d index=%{public}d',
+        this.videoFileName, String(this.playerAutoNext), this.playbackQueue.length, this.currentQueueIndex)
+      if (this.playerAutoNext && this.isLocalSource) {
         this.playNextQueueItem(true)
       }
     }
@@ -3800,19 +3839,52 @@ struct LocalPlayerPage {
     if (this.isAnimatingFullscreen) {
       return
     }
+    this.followSystemOrientationOnOpen = false
     this.isAnimatingFullscreen = true
     this.prepareFullscreenControlTransition()
 
     this.runFullscreenOneShotTransition(!this.isFullScreen, true)
   }
 
-  /** Local videos open directly in landscape fullscreen; the user can still exit with the normal control. */
-  private enterFullscreenOnOpen(): void {
-    if (this.videoUri.length === 0 || this.isFullScreen) {
+  /** Apply the user's preferred player orientation without changing manual fullscreen behavior. */
+  private applyOpenOrientationOnOpen(): void {
+    if (this.videoUri.length === 0) {
       return
     }
-    this.isFullScreen = true
-    this.setFullScreenMode(true, true)
+    const preference = normalizePlayerOpenOrientation(this.playerOpenOrientation)
+    this.followSystemOrientationOnOpen = preference === PLAYER_OPEN_ORIENTATION_SYSTEM
+    this.isFullScreen = preference === PLAYER_OPEN_ORIENTATION_LANDSCAPE
+    AppStorage.setOrCreate('playerFullScreen', this.isFullScreen)
+    this.applyOpenOrientationToWindow(preference)
+  }
+
+  private async applyOpenOrientationToWindow(preference: string): Promise<void> {
+    try {
+      const context = getContext(this)
+      const mainWindow = await window.getLastWindow(context)
+      if (preference === PLAYER_OPEN_ORIENTATION_LANDSCAPE) {
+        mainWindow.setWindowSystemBarEnable([])
+        if (this.isPhoneDevice()) {
+          await mainWindow.setPreferredOrientation(window.Orientation.AUTO_ROTATION_LANDSCAPE)
+        }
+        mainWindow.enableLandscapeMultiWindow().catch((err: BusinessError) => {
+          logger.warn('enableLandscapeMultiWindow failed: %{public}d', err.code)
+        })
+        return
+      }
+
+      mainWindow.setWindowSystemBarEnable(['status', 'navigation'])
+      if (this.isPhoneDevice()) {
+        const orientation = preference === PLAYER_OPEN_ORIENTATION_PORTRAIT ?
+          window.Orientation.AUTO_ROTATION_PORTRAIT : window.Orientation.AUTO_ROTATION_UNSPECIFIED
+        await mainWindow.setPreferredOrientation(orientation)
+      }
+      mainWindow.disableLandscapeMultiWindow().catch((err: BusinessError) => {
+        logger.warn('disableLandscapeMultiWindow failed: %{public}d', err.code)
+      })
+    } catch (_err) {
+      logger.warn('Failed to apply player open orientation')
+    }
   }
 
   private async setFullScreenMode(fullScreen: boolean, lockLandscape: boolean = true): Promise<void> {
@@ -3850,8 +3922,35 @@ struct LocalPlayerPage {
     if (width <= 0 || height <= 0) {
       return
     }
+    if (this.followSystemOrientationOnOpen && Math.abs(width - height) > 1) {
+      const landscape = width > height
+      if (this.isFullScreen !== landscape) {
+        this.isFullScreen = landscape
+        AppStorage.setOrCreate('playerFullScreen', landscape)
+        this.updateFollowSystemWindowChrome(landscape)
+      }
+    }
     // 旋转中会出现短暂的中间尺寸（如 373 × 373）；仅在布局稳定后同步画面模式。
     this.schedulePlayerAspectSync()
+  }
+
+  private async updateFollowSystemWindowChrome(landscape: boolean): Promise<void> {
+    try {
+      const context = getContext(this)
+      const mainWindow = await window.getLastWindow(context)
+      mainWindow.setWindowSystemBarEnable(landscape ? [] : ['status', 'navigation'])
+      if (landscape) {
+        mainWindow.enableLandscapeMultiWindow().catch((err: BusinessError) => {
+          logger.warn('enableLandscapeMultiWindow failed: %{public}d', err.code)
+        })
+      } else {
+        mainWindow.disableLandscapeMultiWindow().catch((err: BusinessError) => {
+          logger.warn('disableLandscapeMultiWindow failed: %{public}d', err.code)
+        })
+      }
+    } catch (_err) {
+      logger.warn('Failed to update follow-system player layout')
+    }
   }
 
   private isPhoneDevice(): boolean {
@@ -4204,7 +4303,7 @@ struct LocalPlayerPage {
 
   /** Saves progress; only an actual exit refreshes the history cover at the current frame. */
   private async saveLocalHistory(captureExitFrame: boolean = false): Promise<void> {
-    if (this.videoFileName.length === 0) {
+    if (!this.isLocalSource || this.videoFileName.length === 0) {
       return
     }
     try {
@@ -4234,10 +4333,6 @@ struct LocalPlayerPage {
       record.fileSize = this.videoFileSize
       record.durationMs = this.durationMs
       record.positionMs = this.playerRememberPosition ? this.positionMs : 0
-      if (captureExitFrame) {
-        record.coverUri = await LocalVideoThumbnailStore.getInstance()
-          .ensureThumbnail(this.videoUri, this.videoFileName, this.videoFileSize, this.positionMs)
-      }
       record.lastPlayedAt = Date.now()
       record.danmakuFileName = this.danmakuFileName
       record.danmakuUri = this.danmakuUri
@@ -4250,14 +4345,62 @@ struct LocalPlayerPage {
       logger.info('Save local history: name=%{public}s position=%{public}d duration=%{public}d',
         this.videoFileName, this.positionMs, this.durationMs)
       await this.localVideoHistoryStore.upsert(record)
+      if (captureExitFrame) {
+        const coverPositionMs = this.durationMs > 0
+          ? Math.min(this.positionMs, Math.max(0, this.durationMs - 1))
+          : this.positionMs
+        const thumbnailStore = LocalVideoThumbnailStore.getInstance()
+        let coverUri = await thumbnailStore
+          .ensureThumbnail(this.videoUri, this.videoFileName, this.videoFileSize, coverPositionMs)
+        if (coverUri.length === 0) {
+          coverUri = await thumbnailStore
+            .ensureRandomThumbnail(this.videoUri, this.videoFileName, this.videoFileSize)
+        }
+        if (coverUri.length > 0) {
+          await this.localVideoHistoryStore.updateCoverUri(record.fileKey, coverUri)
+        }
+      }
     } catch (err) {
       logger.warn('保存本地播放记录失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
   }
 
+  private reportEmbyPlaybackState(state: PlayerState): void {
+    if (this.embyReporter === null || state.error.length > 0) {
+      return
+    }
+    const ready = state.stateName === 'prepared' || state.stateName === 'playing' || state.playing
+    if (!this.embyPlaybackStarted && ready) {
+      this.embyPlaybackStarted = true
+      this.lastEmbyProgressMs = Date.now()
+      this.lastEmbyPlayingState = state.playing
+      this.embyReporter.started(state.positionMs, state.durationMs, state.playing, state.speed)
+      return
+    }
+    if (!this.embyPlaybackStarted) {
+      return
+    }
+    const now = Date.now()
+    const playingChanged = state.playing !== this.lastEmbyPlayingState
+    if (playingChanged || now - this.lastEmbyProgressMs >= EMBY_PROGRESS_INTERVAL_MS) {
+      this.lastEmbyProgressMs = now
+      this.lastEmbyPlayingState = state.playing
+      this.embyReporter.progress(state.positionMs, state.durationMs, state.playing, state.speed,
+        playingChanged ? (state.playing ? 'Unpause' : 'Pause') : 'TimeUpdate')
+    }
+  }
+
+  private stopEmbyPlaybackReport(): void {
+    if (this.embyReporter === null || !this.embyPlaybackStarted) {
+      return
+    }
+    this.embyPlaybackStarted = false
+    this.embyReporter.stopped(this.positionMs, this.durationMs, this.speed)
+  }
+
   /** Saves the subtitle selection immediately, including before first playback progress exists. */
   private async persistExternalSubtitleBinding(): Promise<void> {
-    if (this.videoUri.length === 0 || this.videoFileName.length === 0) {
+    if (!this.isLocalSource || this.videoUri.length === 0 || this.videoFileName.length === 0) {
       return
     }
     try {
@@ -4272,6 +4415,9 @@ struct LocalPlayerPage {
   }
 
   private async restoreExternalSubtitleFromHistory(): Promise<void> {
+    if (!this.isLocalSource) {
+      return
+    }
     const targetVideoUri = this.videoUri
     if (targetVideoUri.length === 0 || this.externalSubtitleRestoreAttemptedForUrl === targetVideoUri ||
       this.externalSubtitleRestoreInProgressForUrl === targetVideoUri) {
@@ -4444,6 +4590,90 @@ struct LocalPlayerPage {
     this.currentQueueIndex = 0
   }
 
+  /**
+   * Home/history entry points may provide a global history queue instead of
+   * the current directory. Replace that queue with direct siblings from the
+   * app-owned folder, while retaining any known resume positions.
+   */
+  private async refreshSameDirectoryPlaybackQueue(): Promise<void> {
+    if (!this.isPageAlive || this.videoUri.length === 0 || this.isCurrentDirectoryQueue()) {
+      return
+    }
+    if (this.siblingQueueRefreshUri === this.videoUri) {
+      return
+    }
+    const targetUri = this.videoUri
+    this.siblingQueueRefreshUri = targetUri
+    try {
+      const context = getContext(this) as common.UIAbilityContext
+      const records = await UserDownloadFolder.listSiblingVideoRecords(context, targetUri)
+      if (!this.isPageAlive || this.videoUri !== targetUri || records === null || records.length <= 1) {
+        return
+      }
+      const rebuilt: PlaybackQueueItem[] = []
+      for (let i = 0; i < records.length; i++) {
+        const item = PlaybackQueueItem.fromRecord(records[i])
+        for (let j = 0; j < this.playbackQueue.length; j++) {
+          const oldItem = this.playbackQueue[j]
+          if (oldItem.uri === item.uri && oldItem.size === item.size) {
+            item.positionMs = oldItem.positionMs
+            item.durationMs = oldItem.durationMs
+            break
+          }
+        }
+        rebuilt.push(item)
+      }
+      let currentIndex = -1
+      for (let i = 0; i < rebuilt.length; i++) {
+        if (rebuilt[i].uri === targetUri) {
+          currentIndex = i
+          break
+        }
+      }
+      if (currentIndex < 0) {
+        return
+      }
+      this.playbackQueue = rebuilt
+      this.currentQueueIndex = currentIndex
+      logger.info('已按当前目录重建播放队列: name=%{public}s count=%{public}d index=%{public}d',
+        this.videoFileName, rebuilt.length, currentIndex)
+    } catch (err) {
+      logger.warn('按当前目录重建播放队列失败: %{public}s', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  private isCurrentDirectoryQueue(): boolean {
+    if (this.playbackQueue.length <= 1 || this.videoUri.length === 0) {
+      return false
+    }
+    const currentDirectory = this.getUriDirectory(this.videoUri)
+    if (currentDirectory.length === 0) {
+      return false
+    }
+    for (let i = 0; i < this.playbackQueue.length; i++) {
+      if (this.getUriDirectory(this.playbackQueue[i].uri) !== currentDirectory) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private getUriDirectory(uri: string): string {
+    let cleanUri = uri
+    const queryIndex = cleanUri.indexOf('?')
+    const fragmentIndex = cleanUri.indexOf('#')
+    let endIndex = cleanUri.length
+    if (queryIndex >= 0) {
+      endIndex = Math.min(endIndex, queryIndex)
+    }
+    if (fragmentIndex >= 0) {
+      endIndex = Math.min(endIndex, fragmentIndex)
+    }
+    cleanUri = cleanUri.substring(0, endIndex)
+    const slashIndex = cleanUri.lastIndexOf('/')
+    return slashIndex > 0 ? cleanUri.substring(0, slashIndex) : ''
+  }
+
   private getPlaybackQueueLabel(): string {
     if (this.playbackQueue.length === 0 || this.currentQueueIndex < 0) {
       return '无列表'
@@ -4459,15 +4689,18 @@ struct LocalPlayerPage {
     this.playQueueItem(this.currentQueueIndex - 1, false)
   }
 
-  private playNextQueueItem(autoPlay: boolean): void {
+  private async playNextQueueItem(autoPlay: boolean): Promise<void> {
+    await this.refreshSameDirectoryPlaybackQueue()
     const nextIndex = this.currentQueueIndex + 1
     if (nextIndex >= this.playbackQueue.length) {
+      logger.info('没有可自动播放的同目录视频: autoPlay=%{public}s queue=%{public}d index=%{public}d',
+        String(autoPlay), this.playbackQueue.length, this.currentQueueIndex)
       if (!autoPlay) {
         promptAction.showToast({ message: '已经是最后一集了' })
       }
       return
     }
-    this.playQueueItem(nextIndex, autoPlay)
+    await this.playQueueItem(nextIndex, autoPlay)
   }
 
   private async playQueueItem(index: number, autoPlay: boolean): Promise<void> {

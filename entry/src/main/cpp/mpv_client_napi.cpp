@@ -8,6 +8,8 @@
 #include "ohos_surface_helper.h"
 #include "mpv_event_handler.h"
 #include "video_processing_helper.h"
+#include "m3u8_converter_native.h"
+#include "video_thumbnail_native.h"
 #include "napi/native_api.h"
 
 #ifndef DECLARE_NAPI_FUNCTION
@@ -406,6 +408,8 @@ static napi_value Init(napi_env env, napi_value exports)
         DECLARE_NAPI_FUNCTION("nativeVpStart", NativeVpStart),
         DECLARE_NAPI_FUNCTION("nativeVpStop", NativeVpStop),
         DECLARE_NAPI_FUNCTION("nativeVpDestroy", NativeVpDestroy),
+        DECLARE_NAPI_FUNCTION("nativeConvertM3u8ToMp4", NativeConvertM3u8ToMp4),
+        DECLARE_NAPI_FUNCTION("nativeGenerateVideoThumbnail", NativeGenerateVideoThumbnail),
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

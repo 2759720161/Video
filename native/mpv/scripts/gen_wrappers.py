@@ -16,7 +16,8 @@ import subprocess
 WRAPPER_DIR = os.path.abspath(os.environ["WRAPPER_DIR"])
 OHOS_NDK_WSL = os.path.abspath(os.path.expanduser(os.environ["OHOS_NDK"]))
 PROJECT_TMPDIR_WSL = os.path.abspath(os.environ["MPV_BUILD_TMPDIR"])
-OHOS_NDK_WIN = subprocess.check_output(
+OHOS_NDK_WIN_OVERRIDE = os.environ.get("OHOS_NDK_WIN_OVERRIDE", "").strip()
+OHOS_NDK_WIN = OHOS_NDK_WIN_OVERRIDE or subprocess.check_output(
     ["wslpath", "-w", OHOS_NDK_WSL], text=True
 ).strip()
 SYSROOT_WIN = OHOS_NDK_WIN + r"\sysroot"

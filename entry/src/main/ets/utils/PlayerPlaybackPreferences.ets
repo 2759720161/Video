@@ -1,8 +1,13 @@
 export const PREFS_KEY_PLAYER_DEFAULT_SPEED: string = 'playerDefaultSpeed'
 export const PREFS_KEY_PLAYER_SEEK_SECONDS: string = 'playerSeekSeconds'
+export const PREFS_KEY_PLAYER_OPEN_ORIENTATION: string = 'playerOpenOrientation'
 
 export const PLAYER_DEFAULT_SPEED: number = 1.0
 export const PLAYER_SEEK_SECONDS_DEFAULT: number = 15
+export const PLAYER_OPEN_ORIENTATION_LANDSCAPE: string = 'landscape'
+export const PLAYER_OPEN_ORIENTATION_PORTRAIT: string = 'portrait'
+export const PLAYER_OPEN_ORIENTATION_SYSTEM: string = 'system'
+export const PLAYER_OPEN_ORIENTATION_DEFAULT: string = PLAYER_OPEN_ORIENTATION_LANDSCAPE
 
 export function normalizePlayerSpeed(value: number): number {
   const supported: number[] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
@@ -26,4 +31,11 @@ export function normalizeSeekSeconds(value: number): number {
     return 30
   }
   return 15
+}
+
+export function normalizePlayerOpenOrientation(value: string): string {
+  if (value === PLAYER_OPEN_ORIENTATION_PORTRAIT || value === PLAYER_OPEN_ORIENTATION_SYSTEM) {
+    return value
+  }
+  return PLAYER_OPEN_ORIENTATION_LANDSCAPE
 }

@@ -41,6 +41,8 @@ else()
         mpv_event_handler.cpp
         ohos_surface_helper.cpp
         video_processing_helper.cpp
+        m3u8_converter_native.cpp
+        video_thumbnail_native.cpp
         mpv_client_napi.cpp
     )
 

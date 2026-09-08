@@ -11,6 +11,22 @@ declare module 'libmpv_napi.so' {
     logText: string
   }
 
+  export interface M3u8ConverterUpdate {
+    progress: number
+    finished: boolean
+    success: boolean
+    errorCode: number
+    message: string
+    outputPath: string
+  }
+
+  export interface VideoThumbnailUpdate {
+    success: boolean
+    errorCode: number
+    message: string
+    outputPath: string
+  }
+
   export interface MpvNapiModule {
     nativeCreate: () => number
     nativeInitialize: (ctxId: number) => number
@@ -23,14 +39,18 @@ declare module 'libmpv_napi.so' {
     nativeDestroy: (ctxId: number) => void
     nativeSetSurfaceId: (ctxId: number, surfaceId: string) => number
     nativeApiVersion: () => number
-  nativeOnEvent: (ctxId: number, callback: (event: MpvEventData) => void) => number
-  nativeVpCreate: (qualityLevel: number) => number
-  nativeVpSetOutputSurface: (surfaceId: string) => number
-  nativeVpGetInputSurfaceId: () => string | null
-  nativeVpSetQualityLevel: (qualityLevel: number) => number
-  nativeVpStart: () => number
-  nativeVpStop: () => number
-  nativeVpDestroy: () => void
+    nativeOnEvent: (ctxId: number, callback: (event: MpvEventData) => void) => number
+    nativeVpCreate: (qualityLevel: number) => number
+    nativeVpSetOutputSurface: (surfaceId: string) => number
+    nativeVpGetInputSurfaceId: () => string | null
+    nativeVpSetQualityLevel: (qualityLevel: number) => number
+    nativeVpStart: () => number
+    nativeVpStop: () => number
+    nativeVpDestroy: () => void
+    nativeConvertM3u8ToMp4: (source: string, output: string,
+      callback: (update: M3u8ConverterUpdate) => void) => number
+    nativeGenerateVideoThumbnail: (source: string, output: string,
+      callback: (update: VideoThumbnailUpdate) => void) => number
   }
 
   const mpvNapi: MpvNapiModule
@@ -47,12 +67,16 @@ declare module 'libmpv_napi.so' {
   export const nativeDestroy: (ctxId: number) => void
   export const nativeSetSurfaceId: (ctxId: number, surfaceId: string) => number
   export const nativeApiVersion: () => number
-export const nativeOnEvent: (ctxId: number, callback: (event: MpvEventData) => void) => number
-export const nativeVpCreate: (qualityLevel: number) => number
-export const nativeVpSetOutputSurface: (surfaceId: string) => number
-export const nativeVpGetInputSurfaceId: () => string | null
-export const nativeVpSetQualityLevel: (qualityLevel: number) => number
-export const nativeVpStart: () => number
-export const nativeVpStop: () => number
-export const nativeVpDestroy: () => void
+  export const nativeOnEvent: (ctxId: number, callback: (event: MpvEventData) => void) => number
+  export const nativeVpCreate: (qualityLevel: number) => number
+  export const nativeVpSetOutputSurface: (surfaceId: string) => number
+  export const nativeVpGetInputSurfaceId: () => string | null
+  export const nativeVpSetQualityLevel: (qualityLevel: number) => number
+  export const nativeVpStart: () => number
+  export const nativeVpStop: () => number
+  export const nativeVpDestroy: () => void
+  export const nativeConvertM3u8ToMp4: (source: string, output: string,
+    callback: (update: M3u8ConverterUpdate) => void) => number
+  export const nativeGenerateVideoThumbnail: (source: string, output: string,
+    callback: (update: VideoThumbnailUpdate) => void) => number
 }
