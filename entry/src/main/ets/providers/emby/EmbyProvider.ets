@@ -4,6 +4,7 @@ import { ProviderCapability } from '../../core/media/ProviderCapabilities'
 import { PlaybackSession } from '../../core/playback/PlaybackSession'
 import { PlaybackQueueItem } from '../../core/playback/PlaybackQueueItem'
 import { PlaybackMedia } from '../../core/playback/PlaybackMedia'
+import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
 import type { MediaProvider } from '../base/MediaProvider'
 import type { PlaybackResolver } from '../../core/playback/PlaybackResolver'
@@ -58,6 +59,11 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     return this.client.getItems(EmbyProvider.normalizeText(parentId))
   }
 
+  /** Emby 全局搜索保留专属条目元数据，供媒体中心搜索结果直接渲染。 */
+  async searchRaw(keyword: string): Promise<EmbyItem[]> {
+    return this.client.searchItems(EmbyProvider.normalizeText(keyword))
+  }
+
   async getItemRaw(itemId: string): Promise<EmbyItem | null> {
     const normalizedItemId = EmbyProvider.normalizeText(itemId)
     if (normalizedItemId.length === 0) return null
@@ -65,7 +71,15 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
   }
 
   imageUrlFor(item: EmbyItem, maxWidth: number = 500): string {
-    return this.client.imageUrl(item, maxWidth)
+    return this.client.primaryImageUrl(item, maxWidth)
+  }
+
+  backdropUrlFor(item: EmbyItem, maxWidth: number = 1200): string {
+    return this.client.backdropImageUrl(item, maxWidth)
+  }
+
+  thumbnailUrlFor(item: EmbyItem, maxWidth: number = 800): string {
+    return this.client.thumbnailImageUrl(item, maxWidth)
   }
 
   hasCapability(capability: ProviderCapability): boolean {
@@ -131,6 +145,10 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     return item === null ? null : this.toMediaItem(item)
   }
 
+  async getPlaybackVariants(item: EmbyItem): Promise<PlaybackVariant[]> {
+    return await this.client.getPlaybackVariants(item)
+  }
+
   async resolvePlayback(item: PlaybackQueueItem): Promise<PlaybackSession> {
     const mediaId = EmbyProvider.normalizeText(item.mediaId)
     if (EmbyProvider.normalizeText(item.sourceId) !== this.source.id || mediaId.length === 0) {
@@ -138,7 +156,7 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     }
     const embyItem = await this.client.getItem(mediaId)
     if (embyItem === null || embyItem.isFolder) throw new Error('Emby 媒体不存在或不可播放')
-    const route = await this.client.getPlaybackRoute(embyItem)
+    const route = await this.client.getPlaybackRoute(embyItem, item.variantId)
     const session = new PlaybackSession()
     session.media.sourceId = this.source.id
     session.media.mediaId = embyItem.id
@@ -235,12 +253,18 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     result.overview = item.overview
     result.poster = this.client.imageUrl(item)
     result.artworkRef = ArtworkResolver.forEmby(this.source.id, item.id, item.primaryImageTag)
+    result.backdrop = this.client.backdropImageUrl(item)
+    result.backdropRef = ArtworkResolver.forEmbyBackdrop(this.source.id, item.id, item.backdropImageTag)
     result.durationMs = item.durationMs()
     result.positionMs = item.resumePositionMs()
     result.year = item.productionYear
     result.playable = !item.isFolder
     result.browsable = item.isFolder
     result.type = EmbyProvider.mapType(item.type)
+    result.variantId = item.variantId
+    for (let i = 0; i < item.variants.length; i++) {
+      result.variants.push(item.variants[i])
+    }
     return result
   }
 
@@ -255,6 +279,9 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     queueItem.positionMs = PlaybackQueueItem.normalizePositionMs(item.positionMs)
     queueItem.durationMs = PlaybackQueueItem.normalizeDurationMs(item.durationMs)
     queueItem.variantId = item.variantId
+    for (let i = 0; i < item.variants.length; i++) {
+      queueItem.variants.push(item.variants[i])
+    }
     return queueItem
   }
 

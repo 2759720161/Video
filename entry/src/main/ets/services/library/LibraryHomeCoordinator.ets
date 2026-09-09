@@ -76,10 +76,12 @@ export class LibraryHomeCoordinator {
         item.overview = value.overview
         item.type = value.type
         item.artworkRef = value.artworkRef
+        item.backdropRef = value.backdropRef
         // Runtime poster URLs may contain provider credentials (for example
         // Emby's api_key). They are useful for the live snapshot, but must
         // never be written to the persistent home cache.
         item.poster = includeRuntimeArtwork ? value.poster : ''
+        item.backdrop = includeRuntimeArtwork ? value.backdrop : ''
         item.durationMs = value.durationMs
         item.positionMs = value.positionMs
         item.variantId = value.variantId

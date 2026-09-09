@@ -46,7 +46,7 @@ export struct MediaSourceShortcutCard {
     .backgroundColor($r('app.color.card_background'))
     .border({ width: 0.5, color: $r('app.color.card_specular_border') })
     .enabled(this.isEnabled)
-    .opacity(this.isEnabled ? 1 : 0.55)
+    .opacity(this.isEnabled ? (this.isPressed ? 0.86 : 1) : 0.55)
     .scale({ x: this.isPressed ? 0.96 : 1, y: this.isPressed ? 0.96 : 1 })
     .animation({ duration: 140, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => {

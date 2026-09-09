@@ -5,8 +5,9 @@ import {
   EmbyPlaybackRoute,
   EmbyServerConfig
 } from './EmbyModels'
-import { EmbyPlaybackInfo } from './EmbyPlaybackInfo'
+import { EmbyMediaSource, EmbyPlaybackInfo } from './EmbyPlaybackInfo'
 import { EmbyPlaybackMode, EmbyPlaybackPolicy } from './EmbyPlaybackPolicy'
+import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 
 const EMBY_CLIENT_NAME: string = 'Yingxia'
 const EMBY_DEVICE_NAME: string = 'HarmonyOS'
@@ -56,7 +57,7 @@ export class EmbyClient {
     const normalizedItemId = EmbyClient.normalizeText(itemId)
     if (normalizedItemId.length === 0) return null
     const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items/' + encodeURIComponent(normalizedItemId) +
-      '?Fields=Overview%2CPrimaryImageAspectRatio%2CParentId&EnableImages=true&EnableUserData=true'
+      '?Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags&EnableImages=true&EnableUserData=true'
     const value = await this.requestObject(path, http.RequestMethod.GET)
     const items = this.parseItems({ 'Items': [value] })
     return items.length === 0 ? null : items[0]
@@ -65,7 +66,7 @@ export class EmbyClient {
   async searchItems(keyword: string, limit: number = 50): Promise<EmbyItem[]> {
     const query = '/Users/' + encodeURIComponent(this.config.userId) + '/Items?SearchTerm=' +
       encodeURIComponent(EmbyClient.normalizeText(keyword)) + '&Recursive=true&Limit=' + Math.max(1, limit) +
-      '&Fields=Overview%2CPrimaryImageAspectRatio%2CParentId&EnableImages=true&EnableUserData=true'
+      '&Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags&EnableImages=true&EnableUserData=true'
     return this.parseItems(await this.requestObject(query, http.RequestMethod.GET))
   }
 
@@ -77,7 +78,7 @@ export class EmbyClient {
       'Recursive=' + (recursive ? 'true' : 'false'),
       'SortBy=' + encodeURIComponent(sortBy),
       'SortOrder=' + encodeURIComponent(sortOrder),
-      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId',
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags',
       'EnableImages=true',
       'EnableUserData=true',
       'ImageTypeLimit=1'
@@ -117,7 +118,7 @@ export class EmbyClient {
       'Recursive=true',
       'MediaTypes=Video',
       'Limit=' + Math.max(1, limit),
-      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId',
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags',
       'EnableImages=true',
       'EnableUserData=true',
       'ImageTypeLimit=1'
@@ -133,7 +134,7 @@ export class EmbyClient {
       'IncludeItemTypes=Movie%2CSeries%2CEpisode%2CVideo',
       'SortBy=DateCreated',
       'SortOrder=Descending',
-      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId',
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags',
       'EnableImages=true',
       'EnableUserData=true',
       'ImageTypeLimit=1'
@@ -146,7 +147,7 @@ export class EmbyClient {
     return this.parseItems(response)
   }
 
-  imageUrl(item: EmbyItem, maxWidth: number = 500): string {
+  primaryImageUrl(item: EmbyItem, maxWidth: number = 500): string {
     if (item.imageItemId.length === 0 || item.primaryImageTag.length === 0) {
       return ''
     }
@@ -155,7 +156,47 @@ export class EmbyClient {
       '&api_key=' + encodeURIComponent(this.config.accessToken)
   }
 
-  async getPlaybackRoute(item: EmbyItem): Promise<EmbyPlaybackRoute> {
+  backdropImageUrl(item: EmbyItem, maxWidth: number = 1200): string {
+    if (item.backdropItemId.length === 0 || item.backdropImageTag.length === 0) return ''
+    return this.config.baseUrl + '/Items/' + encodeURIComponent(item.backdropItemId) + '/Images/Backdrop' +
+      '?maxWidth=' + maxWidth + '&quality=85&tag=' + encodeURIComponent(item.backdropImageTag) +
+      '&api_key=' + encodeURIComponent(this.config.accessToken)
+  }
+
+  thumbnailImageUrl(item: EmbyItem, maxWidth: number = 800): string {
+    if (item.thumbnailItemId.length === 0 || item.thumbnailImageTag.length === 0) return ''
+    return this.config.baseUrl + '/Items/' + encodeURIComponent(item.thumbnailItemId) + '/Images/Thumb' +
+      '?maxWidth=' + maxWidth + '&quality=85&tag=' + encodeURIComponent(item.thumbnailImageTag) +
+      '&api_key=' + encodeURIComponent(this.config.accessToken)
+  }
+
+  /** 兼容旧调用方；新页面应按 primary/backdrop 语义选择 URL。 */
+  imageUrl(item: EmbyItem, maxWidth: number = 500): string {
+    return this.primaryImageUrl(item, maxWidth)
+  }
+
+  async getPlaybackVariants(item: EmbyItem): Promise<PlaybackVariant[]> {
+    const path = '/Items/' + encodeURIComponent(item.id) + '/PlaybackInfo?UserId=' +
+      encodeURIComponent(this.config.userId)
+    const response = await this.requestObject(path, http.RequestMethod.GET)
+    const info = EmbyPlaybackInfo.parse(response)
+    const result: PlaybackVariant[] = []
+    const usedIds: Record<string, boolean> = {}
+    for (let i = 0; i < info.mediaSources.length; i++) {
+      const source = info.mediaSources[i]
+      const id = source.id.length > 0 ? source.id : 'source_' + i
+      if (usedIds[id] === true) continue
+      usedIds[id] = true
+      const variant = new PlaybackVariant()
+      variant.id = id
+      variant.name = source.name.length > 0 ? source.name : (source.container.length > 0 ? source.container.toUpperCase() : '播放版本 ' + (i + 1))
+      variant.quality = EmbyClient.playbackQuality(source.bitrate)
+      result.push(variant)
+    }
+    return result
+  }
+
+  async getPlaybackRoute(item: EmbyItem, variantId: string = ''): Promise<EmbyPlaybackRoute> {
     const path = '/Items/' + encodeURIComponent(item.id) + '/PlaybackInfo?UserId=' +
       encodeURIComponent(this.config.userId)
     const response = await this.requestObject(path, http.RequestMethod.GET)
@@ -164,7 +205,18 @@ export class EmbyClient {
       throw new Error('Emby 未返回可播放的媒体源')
     }
     const playbackMode = await EmbyPlaybackPolicy.loadMode()
-    const source = EmbyPlaybackPolicy.selectSource(info.mediaSources, playbackMode)
+    let source: EmbyMediaSource | null = null
+    const requestedVariantId = EmbyClient.normalizeText(variantId)
+    if (requestedVariantId.length > 0) {
+      for (let i = 0; i < info.mediaSources.length; i++) {
+        if (info.mediaSources[i].id === requestedVariantId ||
+          (info.mediaSources[i].id.length === 0 && requestedVariantId === 'source_' + i)) {
+          source = info.mediaSources[i]
+          break
+        }
+      }
+    }
+    if (source === null) source = EmbyPlaybackPolicy.selectSource(info.mediaSources, playbackMode)
     const mediaSourceId = source.id.length > 0 ? source.id : item.id
     const playSessionId = info.playSessionId.length > 0 ? info.playSessionId : EmbyClient.createSessionId()
     let url = ''
@@ -322,9 +374,19 @@ export class EmbyClient {
         item.primaryImageTag = EmbyClient.readString(EmbyClient.readObject(value, 'ImageTags'), 'Primary')
       }
       if (item.primaryImageTag.length === 0) {
-        item.primaryImageTag = EmbyClient.readString(value, 'SeriesPrimaryImageTag')
+      item.primaryImageTag = EmbyClient.readString(value, 'SeriesPrimaryImageTag')
         item.imageItemId = EmbyClient.readString(value, 'SeriesId', item.id)
       }
+      const imageTags = EmbyClient.readObject(value, 'ImageTags')
+      item.backdropImageTag = EmbyClient.readString(value, 'BackdropImageTag')
+      if (item.backdropImageTag.length === 0) {
+        const backdropTags = EmbyClient.readStringArray(value, 'BackdropImageTags')
+        if (backdropTags.length > 0) item.backdropImageTag = backdropTags[0]
+      }
+      if (item.backdropImageTag.length === 0) item.backdropImageTag = EmbyClient.readString(imageTags, 'Backdrop')
+      item.backdropItemId = EmbyClient.readString(value, 'BackdropItemId', item.id)
+      item.thumbnailImageTag = EmbyClient.readString(imageTags, 'Thumb')
+      item.thumbnailItemId = item.id
       const userData = EmbyClient.readObject(value, 'UserData')
       item.userData.playbackPositionTicks = EmbyClient.readNumber(userData, 'PlaybackPositionTicks')
       item.userData.playedPercentage = EmbyClient.readNumber(userData, 'PlayedPercentage')
@@ -387,6 +449,14 @@ export class EmbyClient {
     return /^[a-z0-9]+$/.test(normalized) ? normalized : 'mp4'
   }
 
+  private static playbackQuality(bitrate: number): string {
+    if (!Number.isFinite(bitrate) || bitrate <= 0) return ''
+    if (bitrate >= 1000000) {
+      return (Math.round(bitrate / 100000) / 10) + ' Mbps'
+    }
+    return Math.max(1, Math.round(bitrate / 1000)) + ' Kbps'
+  }
+
 
   private static isFolderType(type: string): boolean {
     return type === 'CollectionFolder' || type === 'Folder' || type === 'UserView' ||
@@ -423,6 +493,16 @@ export class EmbyClient {
       if (candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate)) {
         result.push(candidate as Record<string, Object>)
       }
+    }
+    return result
+  }
+
+  private static readStringArray(value: Record<string, Object>, key: string): string[] {
+    const nested = value[key]
+    if (!Array.isArray(nested)) return []
+    const result: string[] = []
+    for (let i = 0; i < nested.length; i++) {
+      if (typeof nested[i] === 'string') result.push(nested[i] as string)
     }
     return result
   }

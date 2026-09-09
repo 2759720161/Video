@@ -1,3 +1,5 @@
+import type { PlaybackVariant } from '../../core/playback/PlaybackVariant'
+
 export class EmbyServerConfig {
   baseUrl: string = ''
   serverId: string = ''
@@ -47,6 +49,14 @@ export class EmbyItem {
   overview: string = ''
   imageItemId: string = ''
   primaryImageTag: string = ''
+  backdropImageTag: string = ''
+  backdropItemId: string = ''
+  thumbnailImageTag: string = ''
+  thumbnailItemId: string = ''
+  /** PlaybackInfo 返回的可选线路；详情页加载后写入，列表响应通常为空。 */
+  variants: PlaybackVariant[] = []
+  /** 当前选择的线路；空值表示交给播放策略自动选择。 */
+  variantId: string = ''
   container: string = ''
   userData: EmbyUserData = new EmbyUserData()
 

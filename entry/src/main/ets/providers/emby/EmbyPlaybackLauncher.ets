@@ -1,6 +1,7 @@
 import { EmbyItem } from './EmbyModels'
 import { MediaItem } from '../../core/media/MediaItem'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
+import { ArtworkResolver } from '../../services/ArtworkResolver'
 
 export class EmbyPlaybackLauncher {
   static async open(uiContext: UIContext, sourceId: string, item: EmbyItem,
@@ -29,9 +30,14 @@ export class EmbyPlaybackLauncher {
     media.id = EmbyPlaybackLauncher.normalizeText(item.id)
     media.title = item.name
     media.subtitle = item.subtitle()
+    media.artworkRef = ArtworkResolver.forEmby(media.sourceId, media.id, item.primaryImageTag)
     media.positionMs = item.resumePositionMs()
     media.durationMs = item.durationMs()
     media.playable = !item.isFolder
+    media.variantId = item.variantId
+    for (let i = 0; i < item.variants.length; i++) {
+      media.variants.push(item.variants[i])
+    }
     return media
   }
 

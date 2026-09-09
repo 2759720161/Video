@@ -15,6 +15,13 @@ export class ProviderDescriptor {
   displayName: string = ''
   category: string = ''
   description: string = ''
+  /** Provider Gallery 使用的短用途描述。 */
+  shortDescription: string = ''
+  /** Provider Gallery 使用的一句话特征摘要。 */
+  featureSummary: string = ''
+  /** 品牌图标/色彩语义预留给 UI 层，不承载路由逻辑。 */
+  brandKind: string = ''
+  comingSoonText: string = ''
   iconKind: string = 'media'
   addRoute: string = ''
   editRoute: string = ''

@@ -26,11 +26,16 @@ export class ArtworkResolver {
     const provider = await ProviderRegistry.get(resolvedSourceId, context)
     if (provider === null || !provider.hasCapability(ProviderCapability.ARTWORK)) return ''
     const item = await provider.getItem(resolvedMediaId)
-    return item === null ? '' : item.poster
+    if (item === null) return ''
+    return decoded !== null && decoded.imageType.toLowerCase() === 'backdrop' ? item.backdrop : item.poster
   }
 
   static forEmby(sourceId: string, mediaId: string, imageTag: string): string {
     return ArtworkRef.fromMedia(sourceId, mediaId, imageTag, 'Primary')
+  }
+
+  static forEmbyBackdrop(sourceId: string, mediaId: string, imageTag: string): string {
+    return ArtworkRef.fromMedia(sourceId, mediaId, imageTag, 'Backdrop')
   }
 
   static persistedValue(runtimeUrl: string, stableRef: string = ''): string {
@@ -48,9 +53,19 @@ export class ArtworkResolver {
 
   private static containsCredential(value: string): boolean {
     const lower = value.toLowerCase()
-    return lower.indexOf('api_key=') >= 0 || lower.indexOf('access_token=') >= 0 ||
-      lower.indexOf('token=') >= 0 || lower.indexOf('authorization=') >= 0 ||
-      lower.indexOf('cookie=') >= 0
+    if (ArtworkResolver.hasCredentialMarker(lower)) return true
+    try {
+      const decoded = decodeURIComponent(lower)
+      return decoded !== lower && ArtworkResolver.hasCredentialMarker(decoded)
+    } catch (_) {
+      return false
+    }
+  }
+
+  private static hasCredentialMarker(value: string): boolean {
+    return value.indexOf('api_key=') >= 0 || value.indexOf('access_token=') >= 0 ||
+      value.indexOf('token=') >= 0 || value.indexOf('authorization=') >= 0 ||
+      value.indexOf('cookie=') >= 0
   }
 
   private static normalizeText(value: string): string {

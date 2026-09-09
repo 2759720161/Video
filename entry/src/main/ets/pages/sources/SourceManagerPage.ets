@@ -11,7 +11,12 @@ import { ProviderCapability } from '../../core/media/ProviderCapabilities'
 import { buildTitleBarOptions, getContentMaxWidth, isTabletLayout,
   HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
-import { ProviderIcon } from '../../components/source/ProviderIcon'
+import { AppRadius } from '../../ui/theme/AppRadius'
+import { AppTypography } from '../../ui/theme/AppTypography'
+import { SourceActionKind } from '../../components/source/SourceActionSheet'
+import { SourceManagerCard } from '../../components/source/SourceManagerCard'
+import { SourceSectionHeader } from '../../components/source/SourceSectionHeader'
+import { PageEmptyState } from '../../components/common/PageEmptyState'
 
 @Entry
 @Component
@@ -20,6 +25,7 @@ struct SourceManagerPage {
   @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onSourceVersionChanged') sourceVersion: number = 0
   @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @State private sources: MediaSourceInstance[] = []
+  @State private reorderMode: boolean = false
   private loadGeneration: number = 0
 
   aboutToAppear(): void { this.loadSources() }
@@ -36,13 +42,37 @@ struct SourceManagerPage {
         }.width('100%').padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE,
           top: AppSpacing.SECTION_COMPACT, bottom: AppSpacing.SMALL })
         Scroll() {
-          Column({ space: 10 }) {
+          Column({ space: 12 }) {
             if (this.sources.length === 0) {
               this.EmptySourcesState()
+            } else if (this.reorderMode) {
+              this.ReorderState()
             } else {
-              ForEach(this.sources, (source: MediaSourceInstance) => {
-                this.SourceRow(source)
-              }, (source: MediaSourceInstance) => 'source_manager_' + source.id)
+              if (this.localSources().length > 0) {
+                SourceSectionHeader({ title: '本地', count: this.localSources().length })
+                ForEach(this.localSources(), (source: MediaSourceInstance) => {
+                  SourceManagerCard({ source: source,
+                    providerLabel: this.providerLabel(source),
+                    statusText: this.sourceStatus(source),
+                    isBuiltIn: true,
+                    canBrowse: this.hasDescriptorCapability(source, ProviderCapability.BROWSE),
+                    isEnabled: source.enabled,
+                    onBrowse: () => this.browse(source) })
+                }, (source: MediaSourceInstance) => 'source_manager_local_' + source.id)
+              }
+              if (this.remoteSources().length > 0) {
+                SourceSectionHeader({ title: '服务器', count: this.remoteSources().length })
+                ForEach(this.remoteSources(), (source: MediaSourceInstance) => {
+                  SourceManagerCard({ source: source,
+                    providerLabel: this.providerLabel(source),
+                    statusText: this.sourceStatus(source),
+                    isBuiltIn: false,
+                    canBrowse: this.hasDescriptorCapability(source, ProviderCapability.BROWSE),
+                    isEnabled: source.enabled,
+                    onBrowse: () => this.browse(source),
+                    onAction: (action: SourceActionKind) => this.handleSourceAction(source, action) })
+                }, (source: MediaSourceInstance) => 'source_manager_remote_' + source.id)
+              }
             }
           }.width('100%').constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
             .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
@@ -58,79 +88,38 @@ struct SourceManagerPage {
 
   @Builder
   private EmptySourcesState(): void {
-    Column({ space: 10 }) {
-      SymbolGlyph($r('sys.symbol.externaldrive'))
-        .fontSize(34)
-        .fontColor([$r('app.color.accent_blue')])
-      Text('还没有媒体来源')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-      Text('添加 Emby 或 WebDAV，即可从首页浏览远程媒体')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .textAlign(TextAlign.Center)
-        .maxLines(2)
-      Button('添加媒体源')
-        .height(38)
-        .fontSize(14)
-        .fontColor($r('app.color.text_on_primary'))
-        .backgroundColor($r('app.color.accent_blue'))
-        .borderRadius(12)
-        .onClick(() => router.pushUrl({ url: 'pages/sources/AddSourcePage' }))
-    }
-    .width('100%')
-    .padding({ top: 46, bottom: 46, left: 20, right: 20 })
-    .alignItems(HorizontalAlign.Center)
-    .borderRadius(18)
-    .backgroundColor($r('app.color.card_background'))
-    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+    PageEmptyState({ icon: $r('sys.symbol.externaldrive'), title: '还没有媒体来源',
+      message: '添加 Emby 或 WebDAV，即可从首页浏览远程媒体', primaryActionText: '添加媒体源',
+      onPrimaryAction: () => router.pushUrl({ url: 'pages/sources/AddSourcePage' }) })
   }
 
   @Builder
-  private SourceRow(source: MediaSourceInstance): void {
-    Column({ space: 10 }) {
-      Row({ space: 12 }) {
-        ProviderIcon({ providerType: source.providerType })
-        Column({ space: 3 }) {
-          Text(source.name).fontSize(17).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
-          Text(this.sourceSubtitle(source, ProviderCatalog.get(source.providerType)))
-            .fontSize(13).fontColor($r('app.color.text_secondary'))
-        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-        if (this.hasDescriptorCapability(source, ProviderCapability.HOME) && !this.isBuiltInSource(source)) {
-          Toggle({ type: ToggleType.Switch, isOn: source.enabled }).onChange((isOn: boolean) => this.toggleSource(source, isOn))
-        }
-      }.width('100%')
-      Row({ space: 8 }) {
-        if (!this.isBuiltInSource(source)) {
-          Button('↑').width(36).height(36).fontSize(13).backgroundColor(Color.Transparent)
-            .onClick(() => this.moveSource(source, -1))
-          Button('↓').width(36).height(36).fontSize(13).backgroundColor(Color.Transparent)
-            .onClick(() => this.moveSource(source, 1))
-        }
-        if (this.hasDescriptorCapability(source, ProviderCapability.BROWSE)) {
-          Button('浏览').layoutWeight(1).height(36).fontSize(13).backgroundColor($r('app.color.accent_blue'))
-          .fontColor($r('app.color.text_on_primary'))
-          .enabled(source.enabled || this.isBuiltInSource(source))
-          .onClick(() => this.browse(source))
-        }
-        if (this.hasEditRoute(source)) {
-          Button('编辑').layoutWeight(1).height(36).fontSize(13)
-            .enabled(this.canEdit(source))
-            .onClick(() => this.editSource(source))
-        }
-        if (this.hasEditRoute(source)) {
-          Button('测试').layoutWeight(1).height(36).fontSize(13).onClick(() => this.testSource(source))
-        }
-        if (!this.isBuiltInSource(source)) {
-          Button('删除').height(36).fontSize(13).fontColor($r('app.color.status_error')).backgroundColor(Color.Transparent)
-            .onClick(() => this.confirmDelete(source))
-        }
-      }.width('100%')
-    }.width('100%').padding(16).borderRadius(14)
-      .backgroundColor($r('app.color.card_background'))
-      .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-      .opacity(source.enabled || this.isBuiltInSource(source) ? 1 : 0.58)
+  private ReorderState(): void {
+    Row() {
+      Column({ space: 3 }) {
+        Text('调整顺序').fontSize(18).fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+        Text('拖动排序入口已收口到这里').fontSize(12).fontColor($r('app.color.text_secondary'))
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      Button('完成').height(36).fontSize(13).fontColor($r('app.color.accent_blue'))
+        .backgroundColor(Color.Transparent).onClick(() => this.reorderMode = false)
+    }.width('100%').padding({ left: AppSpacing.TINY, right: AppSpacing.TINY, bottom: AppSpacing.SMALL })
+    ForEach(this.remoteSources(), (source: MediaSourceInstance, index: number) => {
+      Row({ space: 10 }) {
+        SymbolGlyph($r('sys.symbol.list_bullet')).fontSize(19)
+          .fontColor([$r('app.color.text_secondary')])
+        Text(source.name).fontSize(AppTypography.BODY).fontColor($r('app.color.text_primary'))
+          .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Button('↑').width(36).height(36).fontSize(13).backgroundColor(Color.Transparent)
+          .enabled(index > 0).onClick(() => this.moveSource(source, -1))
+        Button('↓').width(36).height(36).fontSize(13).backgroundColor(Color.Transparent)
+          .enabled(index < this.remoteSources().length - 1).onClick(() => this.moveSource(source, 1))
+      }.width('100%').padding({ left: AppSpacing.CARD_CONTENT, right: AppSpacing.SMALL,
+        top: AppSpacing.SMALL, bottom: AppSpacing.SMALL })
+        .borderRadius(AppRadius.CARD)
+        .backgroundColor($r('app.color.card_background'))
+        .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+    }, (source: MediaSourceInstance) => 'source_reorder_' + source.id)
   }
 
   private async loadSources(): Promise<void> {
@@ -156,10 +145,36 @@ struct SourceManagerPage {
     } catch (_) { promptAction.showToast({ message: '媒体源排序失败' }) }
   }
 
-  private sourceSubtitle(source: MediaSourceInstance, descriptor: ProviderDescriptor | null): string {
+  private providerLabel(source: MediaSourceInstance): string {
     if (this.isBuiltInSource(source)) return '本机文件夹'
-    const label = descriptor === null || descriptor.displayName.length === 0 ? source.providerType : descriptor.displayName
-    return source.enabled ? label : label + ' · 已停用'
+    const descriptor = ProviderCatalog.get(source.providerType)
+    return descriptor === null || descriptor.displayName.length === 0 ? source.providerType : descriptor.displayName
+  }
+
+  private sourceStatus(source: MediaSourceInstance): string {
+    return source.enabled || this.isBuiltInSource(source) ? '' : '已停用'
+  }
+
+  private localSources(): MediaSourceInstance[] {
+    return this.sources.filter((source: MediaSourceInstance) => this.isBuiltInSource(source))
+  }
+
+  private remoteSources(): MediaSourceInstance[] {
+    return this.sources.filter((source: MediaSourceInstance) => !this.isBuiltInSource(source))
+  }
+
+  private handleSourceAction(source: MediaSourceInstance, action: SourceActionKind): void {
+    if (action === SourceActionKind.EDIT) {
+      if (this.canEdit(source)) this.editSource(source)
+    } else if (action === SourceActionKind.TEST) {
+      void this.testSource(source)
+    } else if (action === SourceActionKind.TOGGLE) {
+      void this.toggleSource(source, !source.enabled)
+    } else if (action === SourceActionKind.REORDER) {
+      this.reorderMode = true
+    } else if (action === SourceActionKind.DELETE) {
+      this.confirmDelete(source)
+    }
   }
 
   private canEdit(source: MediaSourceInstance): boolean {
@@ -175,11 +190,6 @@ struct SourceManagerPage {
   private hasDescriptorCapability(source: MediaSourceInstance, capability: ProviderCapability): boolean {
     const descriptor = ProviderCatalog.get(source.providerType)
     return descriptor !== null && descriptor.hasCapability(capability)
-  }
-
-  private hasEditRoute(source: MediaSourceInstance): boolean {
-    const descriptor = ProviderCatalog.get(source.providerType)
-    return descriptor !== null && descriptor.editRoute.length > 0
   }
 
   private editSource(source: MediaSourceInstance): void {

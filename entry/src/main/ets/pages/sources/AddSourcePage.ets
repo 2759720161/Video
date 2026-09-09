@@ -6,6 +6,7 @@ import { ProviderDescriptor } from '../../providers/base/ProviderDescriptor'
 import { getContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { ProviderIcon } from '../../components/source/ProviderIcon'
+import { PageEmptyState } from '../../components/common/PageEmptyState'
 
 class ProviderCategoryGroup {
   category: string = ''
@@ -17,12 +18,19 @@ class ProviderCategoryGroup {
 struct AddSourcePage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
   @StorageLink('screenWidthVp') screenWidthVp: number = 360
-  private providers: ProviderDescriptor[] = ProviderCatalog.getAddableProviders()
+  @State private pressedProviderType: string = ''
+  private providers: ProviderDescriptor[] = ProviderCatalog.getGalleryProviders()
 
   build() {
     HdsNavigation() {
       Scroll() {
         Column({ space: 12 }) {
+          Text('连接你的媒体')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .width('100%')
+            .margin({ top: AppSpacing.SMALL, bottom: AppSpacing.TINY })
           if (this.providerGroups().length === 0) {
             this.EmptyProviderState()
           } else {
@@ -30,9 +38,15 @@ struct AddSourcePage {
               Column({ space: 8 }) {
                 Text(group.category).fontSize(14).fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_secondary')).width('100%').margin({ top: 8, bottom: 2 })
-                ForEach(group.providers, (descriptor: ProviderDescriptor) => {
-                  this.SourceCard(descriptor)
-                }, (descriptor: ProviderDescriptor) => 'add_provider_' + descriptor.type)
+                Grid() {
+                  ForEach(group.providers, (descriptor: ProviderDescriptor) => {
+                    GridItem() { this.SourceCard(descriptor) }
+                  }, (descriptor: ProviderDescriptor) => 'add_provider_' + descriptor.type)
+                }
+                .columnsTemplate(this.providerColumns())
+                .columnsGap(AppSpacing.SMALL)
+                .rowsGap(AppSpacing.SMALL)
+                .width('100%')
               }.width('100%')
             }, (group: ProviderCategoryGroup) => 'add_category_' + group.category)
           }
@@ -77,41 +91,72 @@ struct AddSourcePage {
 
   @Builder
   private SourceCard(descriptor: ProviderDescriptor): void {
-    Row({ space: 14 }) {
-      ProviderIcon({ providerType: descriptor.type })
-      Column({ space: 4 }) {
-        Text(descriptor.displayName).fontSize(17).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
-        Text(this.subtitle(descriptor)).fontSize(13).fontColor($r('app.color.text_secondary')).maxLines(2)
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      Text(descriptor.enabled ? '添加' : '即将支持').fontSize(13).fontColor(descriptor.enabled ? $r('app.color.accent_blue') : $r('app.color.text_secondary'))
+    Column({ space: 9 }) {
+      Row({ space: 12 }) {
+        ProviderIcon({ providerType: descriptor.type })
+        Column({ space: 3 }) {
+          Text(descriptor.displayName).fontSize(17).fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Text(this.subtitle(descriptor)).fontSize(13).fontColor($r('app.color.text_secondary'))
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      }
+      Text(this.featureSummary(descriptor)).fontSize(12).fontColor($r('app.color.text_secondary'))
+        .maxLines(2).width('100%').textOverflow({ overflow: TextOverflow.Ellipsis })
+      Row() {
+        Blank().layoutWeight(1)
+        Text(descriptor.enabled ? '添加' : (descriptor.comingSoonText.length > 0 ? descriptor.comingSoonText : '即将支持'))
+          .fontSize(13)
+          .fontColor(descriptor.enabled ? $r('app.color.accent_blue') : $r('app.color.text_secondary'))
+      }.width('100%')
     }
     .width('100%').padding(16).borderRadius(14)
     .backgroundColor($r('app.color.card_background'))
     .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-    .opacity(descriptor.enabled ? 1 : 0.6)
+    .enabled(descriptor.enabled)
+    .opacity(descriptor.enabled ? (this.pressedProviderType === descriptor.type ? 0.86 : 1) : 0.6)
+    .scale({ x: this.providerCardScale(descriptor.type), y: this.providerCardScale(descriptor.type) })
+    .animation({ duration: 140, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => this.handleProviderTouch(descriptor.type, event))
     .onClick(() => { if (descriptor.enabled) router.pushUrl({ url: descriptor.addRoute }) })
   }
 
   private subtitle(descriptor: ProviderDescriptor): string {
+    if (descriptor.shortDescription.length > 0) return descriptor.shortDescription
     return descriptor.description.length > 0 ? descriptor.description : descriptor.category
+  }
+
+  private featureSummary(descriptor: ProviderDescriptor): string {
+    return descriptor.featureSummary.length > 0 ? descriptor.featureSummary : descriptor.description
+  }
+
+  private providerCardScale(providerType: string): number {
+    return this.pressedProviderType === providerType && this.providersEnabled(providerType) ? 0.96 : 1
+  }
+
+  private providersEnabled(providerType: string): boolean {
+    for (let i = 0; i < this.providers.length; i++) {
+      if (this.providers[i].type === providerType) return this.providers[i].enabled
+    }
+    return false
+  }
+
+  private handleProviderTouch(providerType: string, event: TouchEvent): void {
+    if (!this.providersEnabled(providerType)) return
+    if (event.type === TouchType.Down) {
+      this.pressedProviderType = providerType
+    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      if (this.pressedProviderType === providerType) this.pressedProviderType = ''
+    }
+  }
+
+  private providerColumns(): string {
+    return isTabletLayout(this.screenWidthVp) ? '1fr 1fr' : '1fr'
   }
 
   @Builder
   private EmptyProviderState(): void {
-    Column({ space: 10 }) {
-      SymbolGlyph($r('sys.symbol.plus'))
-        .fontSize(34)
-        .fontColor([$r('app.color.accent_blue')])
-      Text('暂无可添加的媒体源')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-      Text('当前没有已注册的 Provider 类型')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-    }
-    .width('100%')
-    .padding({ top: 52, bottom: 52 })
-    .alignItems(HorizontalAlign.Center)
+    PageEmptyState({ icon: $r('sys.symbol.plus'), title: '暂无可添加的媒体源',
+      message: '当前没有已注册的 Provider 类型' })
   }
 }

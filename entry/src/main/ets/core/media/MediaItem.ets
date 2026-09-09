@@ -23,6 +23,8 @@ export class MediaItem {
   /** 稳定 artwork 引用；poster 仅用于当前运行时展示。 */
   artworkRef: string = ''
   backdrop: string = ''
+  /** 稳定 backdrop 引用；最终地址同样只在运行时解析。 */
+  backdropRef: string = ''
   durationMs: number = 0
   positionMs: number = 0
   /** 影视源或多线路 Provider 当前选择的稳定线路标识。 */
