@@ -8,13 +8,17 @@ import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
 import { ProviderDescriptor } from '../../providers/base/ProviderDescriptor'
 import { ProviderCapability } from '../../core/media/ProviderCapabilities'
-import { buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { buildTitleBarOptions, getContentMaxWidth, isTabletLayout,
+  HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { AppSpacing } from '../../ui/theme/AppSpacing'
+import { ProviderIcon } from '../../components/source/ProviderIcon'
 
 @Entry
 @Component
 struct SourceManagerPage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
   @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onSourceVersionChanged') sourceVersion: number = 0
+  @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @State private sources: MediaSourceInstance[] = []
   private loadGeneration: number = 0
 
@@ -29,13 +33,22 @@ struct SourceManagerPage {
           Text('管理已连接的媒体来源').fontSize(14).fontColor($r('app.color.text_secondary')).layoutWeight(1)
           Button('+ 添加').fontSize(14).fontColor($r('app.color.accent_blue')).backgroundColor(Color.Transparent)
             .onClick(() => router.pushUrl({ url: 'pages/sources/AddSourcePage' }))
-        }.width('100%').padding({ left: 16, right: 8, top: 12, bottom: 8 })
+        }.width('100%').padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE,
+          top: AppSpacing.SECTION_COMPACT, bottom: AppSpacing.SMALL })
         Scroll() {
           Column({ space: 10 }) {
-            ForEach(this.sources, (source: MediaSourceInstance) => {
-              this.SourceRow(source)
-            })
-          }.width('100%').padding({ left: 12, right: 12, bottom: 20 })
+            if (this.sources.length === 0) {
+              this.EmptySourcesState()
+            } else {
+              ForEach(this.sources, (source: MediaSourceInstance) => {
+                this.SourceRow(source)
+              }, (source: MediaSourceInstance) => 'source_manager_' + source.id)
+            }
+          }.width('100%').constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+            .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+              right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+              bottom: AppSpacing.SECTION })
+            .alignItems(HorizontalAlign.Center)
         }.layoutWeight(1).scrollBar(BarState.Off)
       }.width('100%').height('100%')
     }.width('100%').height('100%').mode(NavigationMode.Stack)
@@ -44,11 +57,41 @@ struct SourceManagerPage {
   }
 
   @Builder
+  private EmptySourcesState(): void {
+    Column({ space: 10 }) {
+      SymbolGlyph($r('sys.symbol.externaldrive'))
+        .fontSize(34)
+        .fontColor([$r('app.color.accent_blue')])
+      Text('还没有媒体来源')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+      Text('添加 Emby 或 WebDAV，即可从首页浏览远程媒体')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+      Button('添加媒体源')
+        .height(38)
+        .fontSize(14)
+        .fontColor($r('app.color.text_on_primary'))
+        .backgroundColor($r('app.color.accent_blue'))
+        .borderRadius(12)
+        .onClick(() => router.pushUrl({ url: 'pages/sources/AddSourcePage' }))
+    }
+    .width('100%')
+    .padding({ top: 46, bottom: 46, left: 20, right: 20 })
+    .alignItems(HorizontalAlign.Center)
+    .borderRadius(18)
+    .backgroundColor($r('app.color.card_background'))
+    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+  }
+
+  @Builder
   private SourceRow(source: MediaSourceInstance): void {
     Column({ space: 10 }) {
       Row({ space: 12 }) {
-        SymbolGlyph(this.isBuiltInSource(source) ? $r('sys.symbol.folder') : $r('sys.symbol.play_round_rectangle'))
-          .fontSize(26).fontColor([$r('app.color.accent_blue')])
+        ProviderIcon({ providerType: source.providerType })
         Column({ space: 3 }) {
           Text(source.name).fontSize(17).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
           Text(this.sourceSubtitle(source, ProviderCatalog.get(source.providerType)))
@@ -116,7 +159,7 @@ struct SourceManagerPage {
   private sourceSubtitle(source: MediaSourceInstance, descriptor: ProviderDescriptor | null): string {
     if (this.isBuiltInSource(source)) return '本机文件夹'
     const label = descriptor === null || descriptor.displayName.length === 0 ? source.providerType : descriptor.displayName
-    return label + (source.enabled ? ' · 已启用' : ' · 已停用')
+    return source.enabled ? label : label + ' · 已停用'
   }
 
   private canEdit(source: MediaSourceInstance): boolean {

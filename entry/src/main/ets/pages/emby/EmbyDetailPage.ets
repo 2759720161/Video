@@ -5,12 +5,15 @@ import { EmbyItem } from '../../providers/emby/EmbyModels'
 import { EmbyProvider } from '../../providers/emby/EmbyProvider'
 import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
-import { buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { buildTitleBarOptions, getContentMaxWidth, isTabletLayout,
+  HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { AppSpacing } from '../../ui/theme/AppSpacing'
 
 @Entry
 @Component
 struct EmbyDetailPage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
+  @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @State private sourceId: string = ''
   @State private itemId: string = ''
   @State private item: EmbyItem | null = null
@@ -77,14 +80,21 @@ struct EmbyDetailPage {
           Text('播放版本由 Emby PlaybackInfo 与当前播放策略自动选择')
             .fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
         }
-      }.width('100%').padding(16)
+      }.width('100%')
+        .constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+        .padding(isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE)
+        .alignItems(HorizontalAlign.Center)
     }.width('100%').height('100%').scrollBar(BarState.Off)
   }
 
   @Builder
   private HeroImage(item: EmbyItem): void {
-    Image(this.imageUrl(item)).width('100%').height(210).objectFit(ImageFit.Cover)
+    Image(this.imageUrl(item)).width('100%').height(this.detailHeroHeight()).objectFit(ImageFit.Cover)
       .borderRadius(16).backgroundColor($r('app.color.button_ghost_bg'))
+  }
+
+  private detailHeroHeight(): number {
+    return isTabletLayout(this.screenWidthVp) ? 320 : 210
   }
 
   private async loadItem(): Promise<void> {

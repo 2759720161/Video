@@ -1,5 +1,6 @@
 import { PlayerSurface, releaseRetainedPlayerSession } from '../../components/player/PlayerSurface'
 import { GestureLayer } from '../../components/player/GestureLayer'
+import { PlayerControlButton } from '../../components/player/PlayerControlButton'
 import { DanmakuCanvas } from '../../components/player/DanmakuCanvas'
 import { IPlayerEngine, PlaybackOptions, PlayerState, PlayerTrack, PlayerTrackType, VideoAspectMode, VideoAspectModeHelper, VideoMediaInfo } from '../../core/player/IPlayerEngine'
 import { ExternalSubtitleCue, ExternalSubtitleParser } from '../../core/player/ExternalSubtitleParser'
@@ -811,6 +812,10 @@ struct PlayerPage {
           }
       })
 
+      if (!this.hasEngine && this.playbackErrorText.length === 0) {
+        this.PlaybackLoadingOverlay()
+      }
+
     } else {
       Column() {
         Text(this.playbackErrorText.length > 0 ? this.playbackErrorText : '未选择视频文件')
@@ -904,6 +909,25 @@ struct PlayerPage {
       })
         .zIndex(10)
     }
+  }
+
+  @Builder
+  private PlaybackLoadingOverlay(): void {
+    Column({ space: 12 }) {
+      LoadingProgress()
+        .width(34)
+        .height(34)
+      Text('正在准备播放')
+        .fontSize(13)
+        .fontColor('#CCFFFFFF')
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor('#25000000')
+    .zIndex(5)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -1152,61 +1176,30 @@ struct PlayerPage {
 
   @Builder
   private SubtitleToolButton(): void {
-    Row() {
-      SymbolGlyph($r('sys.symbol.AI_word_suggest'))
-        .fontSize(22)
-        .fontColor([$r('app.color.text_on_primary')])
-    }
-    .width(36)
-    .height(30)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .borderRadius(15)
-    .onClick(() => {
-      if (!this.isPlayerControlActionAllowed()) {
-        return
-      }
-      this.openTrackSheet(PlayerTrackType.subtitle)
-    })
+    PlayerControlButton({ symbol: $r('sys.symbol.AI_word_suggest'), buttonWidth: 40, buttonHeight: 36, iconSize: 22,
+      onButtonClick: () => {
+        if (!this.isPlayerControlActionAllowed()) return
+        this.openTrackSheet(PlayerTrackType.subtitle)
+      } })
   }
 
   @Builder
   private AudioTrackToolButton(): void {
-    Row() {
-      SymbolGlyph($r('sys.symbol.identify_song'))
-        .fontSize(22)
-        .fontColor([$r('app.color.text_on_primary')])
-    }
-    .width(36)
-    .height(30)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .borderRadius(15)
-    .onClick(() => {
-      if (!this.isPlayerControlActionAllowed()) {
-        return
-      }
-      this.openTrackSheet(PlayerTrackType.audio)
-    })
+    PlayerControlButton({ symbol: $r('sys.symbol.identify_song'), buttonWidth: 40, buttonHeight: 36, iconSize: 22,
+      onButtonClick: () => {
+        if (!this.isPlayerControlActionAllowed()) return
+        this.openTrackSheet(PlayerTrackType.audio)
+      } })
   }
 
   @Builder
   private VariantToolButton(): void {
-    Row() {
-      SymbolGlyph($r('sys.symbol.list_bullet'))
-        .fontSize(22)
-        .fontColor([$r('app.color.text_on_primary')])
-    }
-    .width(36)
-    .height(30)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .borderRadius(15)
-    .onClick(() => {
-      if (!this.isPlayerControlActionAllowed()) return
-      this.showVariantSheet = true
-      this.pauseAutoHideTimer()
-    })
+    PlayerControlButton({ symbol: $r('sys.symbol.list_bullet'), buttonWidth: 40, buttonHeight: 36, iconSize: 22,
+      onButtonClick: () => {
+        if (!this.isPlayerControlActionAllowed()) return
+        this.showVariantSheet = true
+        this.pauseAutoHideTimer()
+      } })
   }
 
   @Builder
@@ -1240,11 +1233,11 @@ struct PlayerPage {
         })
 
         if (this.isPlaying) {
-          this.TopSymbolButton($r('sys.symbol.pause_fill'), '暂停', () => {
+          this.PrimaryPlayButton($r('sys.symbol.pause_fill'), () => {
             this.togglePlayPause()
           })
         } else {
-          this.TopSymbolButton($r('sys.symbol.play_fill'), '播放', () => {
+          this.PrimaryPlayButton($r('sys.symbol.play_fill'), () => {
             this.togglePlayPause()
           })
         }
@@ -1345,25 +1338,24 @@ struct PlayerPage {
 
   @Builder
   private TopSymbolButton(symbol: Resource, accessibilityLabel: string, action: () => void) {
-    Row() {
-      SymbolGlyph(symbol)
-        .fontSize(22)
-        .fontColor([$r('app.color.text_on_primary')])
-    }
-    .width(44)
-    .height(44)
-    .borderRadius(22)
-    .backgroundColor('#00000000')
-    .border({ width: 0, color: '#00000000' })
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .onClick(() => {
-      if (!this.isPlayerControlActionAllowed()) {
-        return
-      }
-      action()
-      this.showControlsWithAutoHide()
-    })
+    PlayerControlButton({ symbol: symbol, buttonWidth: 44, buttonHeight: 44, iconSize: 22,
+      onButtonClick: () => {
+        if (!this.isPlayerControlActionAllowed()) return
+        action()
+        this.showControlsWithAutoHide()
+      } })
+  }
+
+  @Builder
+  private PrimaryPlayButton(symbol: Resource, action: () => void): void {
+    PlayerControlButton({ symbol: symbol, buttonWidth: 52, buttonHeight: 52, iconSize: 26,
+      onButtonClick: () => {
+        if (!this.isPlayerControlActionAllowed()) return
+        action()
+        this.showControlsWithAutoHide()
+      } })
+      .backgroundColor($r('app.color.accent_blue'))
+      .borderRadius(26)
   }
 
   @Builder
@@ -1421,22 +1413,11 @@ struct PlayerPage {
 
   @Builder
   private SymbolToolButton(symbol: Resource, accessibilityLabel: string, action: () => void) {
-    Row() {
-      SymbolGlyph(symbol)
-        .fontSize(23)
-        .fontColor([$r('app.color.text_on_primary')])
-    }
-    .width(44)
-    .height(40)
-    .borderRadius(20)
-    .backgroundColor('#00000000')
-    .border({ width: 0, color: '#00000000' })
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .onClick(() => {
-      action()
-      this.showControlsWithAutoHide()
-    })
+    PlayerControlButton({ symbol: symbol, buttonWidth: 44, buttonHeight: 40, iconSize: 23,
+      onButtonClick: () => {
+        action()
+        this.showControlsWithAutoHide()
+      } })
   }
 
   @Builder

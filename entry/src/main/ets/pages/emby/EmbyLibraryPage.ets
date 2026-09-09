@@ -7,7 +7,9 @@ import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { EmbySourceConfigCodec } from '../../providers/emby/EmbySourceConfig'
 import { PreferencesStore } from '../../store/PreferencesStore'
-import { buildImmersiveTitleBarStyle, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL, getTopSpacerHeight } from '../../utils/HdsPageStyle'
+import { buildImmersiveTitleBarStyle, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL,
+  getTopSpacerHeight, getContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
+import { AppSpacing } from '../../ui/theme/AppSpacing'
 
 const EMBY_GREEN: string = '#52B54B'
 const EMBY_GREEN_DARK: string = '#27833C'
@@ -36,6 +38,7 @@ struct EmbyLibraryPage {
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
+  @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @State private title: string = 'Emby'
   @State private sourceId: string = ''
   @State private pendingItemId: string = ''
@@ -133,7 +136,10 @@ struct EmbyLibraryPage {
           Blank().height(this.bottomSafeHeight + 28).width('100%')
           }
           .width('100%')
-          .constraintSize({ minHeight: '100%' })
+          .constraintSize({ minHeight: '100%', maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+          .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+            right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE })
+          .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
         .height('100%')

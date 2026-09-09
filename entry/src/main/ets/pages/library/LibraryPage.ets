@@ -41,9 +41,19 @@ import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
 import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
 import { MediaItem } from '../../core/media/MediaItem'
+import { MediaItemType } from '../../core/media/MediaItem'
 import { ProviderCapability } from '../../core/media/ProviderCapabilities'
 import { ProviderHomeSnapshot } from '../../models/ProviderHomeSnapshot'
 import { LibraryHomeCoordinator } from '../../services/library/LibraryHomeCoordinator'
+import { isTabletLayout, getContentMaxWidth } from '../../utils/HdsPageStyle'
+import { AppSpacing } from '../../ui/theme/AppSpacing'
+import { ContinueWatchingHero } from '../../components/media/ContinueWatchingHero'
+import { ContinueWatchingCard as V2ContinueWatchingCard } from '../../components/media/ContinueWatchingCard'
+import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
+import { QuickAccessCard } from '../../components/source/QuickAccessCard'
+import { MediaSourceShortcutCard } from '../../components/source/MediaSourceShortcutCard'
+import { MediaLandscapeCard } from '../../components/media/MediaLandscapeCard'
+import { MediaPosterCard } from '../../components/media/MediaPosterCard'
 
 const logger = new Logger('LibraryPage')
 const HOME_HISTORY_LIMIT = 6
@@ -62,6 +72,7 @@ export struct LibraryPage {
   @StorageLink('appInForeground') @Watch('onAppForegroundChanged') appInForeground: boolean = true
   @StorageLink('bottomTabAutoHide') bottomTabAutoHide: boolean = BOTTOM_TAB_AUTO_HIDE_DEFAULT
   @StorageLink('bottomTabOffset') bottomTabOffset: number = 0
+  @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @StorageLink(PREFS_KEY_HIDE_LOCAL_MEDIA) hideLocalMedia: boolean = HIDE_MEDIA_CARDS_DEFAULT
   @StorageLink(PREFS_KEY_HIDE_CONTINUE_WATCHING) hideContinueWatching: boolean = HIDE_MEDIA_CARDS_DEFAULT
   @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onMediaSourceChanged') mediaSourceVersion: number = 0
@@ -165,7 +176,9 @@ export struct LibraryPage {
           }
           .width('100%')
           .constraintSize({ minHeight: '100%' })
-          .padding({ left: 16, right: 16 })
+          .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+            right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE })
+          .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
         .height('100%')
@@ -202,33 +215,149 @@ export struct LibraryPage {
   @Builder
   private MediaLibraryContent(): void {
     Column({ space: 0 }) {
-      if (this.continueWatching.length > 0 || this.hideContinueWatching) {
-        this.ContinueWatchingSection()
-      } else {
-        this.HomeEmptyState()
+      this.HomeHeroSectionV2()
+      if (this.getSecondaryHistory().length > 0) {
+        this.RecentWatchingSectionV2()
       }
-      this.QuickActionsSection()
-      this.MediaSourcesSection()
-      this.LocalMediaSection()
-      this.RemoteHomeSection()
+      this.QuickAccessSectionV2()
+      this.LocalMediaSectionV2()
+      this.RemoteHomeSectionV2()
     }
     .width('100%')
+    .constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
   }
 
   @Builder
-  private RemoteHomeSection(): void {
+  private HomeHeroSectionV2(): void {
+    if (this.getHeroHistory() !== null) {
+      ContinueWatchingHero({
+        title: this.heroTitle(),
+        subtitle: this.heroSubtitle(),
+        artworkUrl: this.heroArtworkUrl(),
+        positionMs: this.heroPositionMs(),
+        durationMs: this.heroDurationMs(),
+        heightVp: isTabletLayout(this.screenWidthVp) ? 280 : 196,
+        onHeroPlay: () => this.openHeroHistory()
+      })
+        .margin({ top: 12 })
+    } else {
+      this.WelcomeHeroV2()
+    }
+  }
+
+  @Builder
+  private WelcomeHeroV2(): void {
+    Column({ space: 10 }) {
+      SymbolGlyph($r('sys.symbol.play_fill'))
+        .fontSize(30)
+        .fontColor([$r('app.color.accent_blue')])
+      Text('开始播放')
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+      Text('打开本地视频，或进入你的 Emby / WebDAV 媒体库')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+        .width('100%')
+      Button('打开视频')
+        .height(38)
+        .fontSize(14)
+        .fontColor($r('app.color.text_on_primary'))
+        .backgroundColor($r('app.color.accent_blue'))
+        .borderRadius(12)
+        .onClick(() => {
+          void this.openVideoFile()
+        })
+    }
+    .width('100%')
+    .padding({ top: 28, bottom: 28, left: 20, right: 20 })
+    .borderRadius(24)
+    .backgroundColor($r('app.color.card_background'))
+    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+    .alignItems(HorizontalAlign.Center)
+    .margin({ top: 12 })
+  }
+
+  @Builder
+  private RecentWatchingSectionV2(): void {
+    Column({ space: 10 }) {
+      MediaSectionHeader({ title: '最近观看', actionText: '全部',
+        onAction: () => this.openPlaybackHistoryPage() })
+      Scroll() {
+        Row({ space: 12 }) {
+          ForEach(this.getSecondaryHistory(), (record: PlaybackHistoryViewItem) => {
+            V2ContinueWatchingCard({
+              title: record.title,
+              subtitle: this.watchSummary(record),
+              artworkUrl: record.artworkUrl,
+              positionMs: record.positionMs,
+              durationMs: record.durationMs,
+              onCardClick: () => {
+                void this.openHistoryRecord(record)
+              }
+            })
+          }, (record: PlaybackHistoryViewItem) => 'home_recent_' + record.key + '_' + record.positionMs)
+        }
+        .padding({ right: 24 })
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('calc(100% + 16vp)')
+      .margin({ right: -16 })
+    }
+    .width('100%')
+    .margin({ top: AppSpacing.SECTION_COMPACT })
+  }
+
+  @Builder
+  private QuickAccessSectionV2(): void {
+    Column({ space: 10 }) {
+      MediaSectionHeader({ title: '快捷访问', actionText: '', onAction: () => undefined })
+      Scroll() {
+        Row({ space: 10 }) {
+          QuickAccessCard({ title: '打开视频', subtitle: '选择本地文件', iconKind: 'play',
+            onCardClick: () => {
+              void this.openVideoFile()
+            } })
+          QuickAccessCard({ title: '本地媒体', subtitle: '应用专属目录', iconKind: 'folder',
+            onCardClick: () => this.openFolderPage() })
+          ForEach(this.quickAccessSources(), (source: MediaSourceInstance) => {
+            MediaSourceShortcutCard({
+              title: source.name,
+              providerType: source.providerType,
+              statusText: this.sourceStatus(source),
+              isEnabled: source.enabled || source.providerType === 'local',
+              onCardClick: () => this.openSource(source)
+            })
+          }, (source: MediaSourceInstance) => 'home_quick_source_' + source.id)
+          QuickAccessCard({ title: '添加媒体源', subtitle: 'Emby / WebDAV', iconKind: 'plus',
+            onCardClick: () => router.pushUrl({ url: 'pages/sources/AddSourcePage' }) })
+        }
+        .padding({ right: 24 })
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('calc(100% + 16vp)')
+      .margin({ right: -16 })
+    }
+    .width('100%')
+    .margin({ top: AppSpacing.SECTION_COMPACT })
+  }
+
+  @Builder
+  private RemoteHomeSectionV2(): void {
     if (this.homeSnapshots.length > 0) {
       Column({ space: 14 }) {
         ForEach(this.homeSnapshots, (snapshot: ProviderHomeSnapshot) => {
           ForEach(snapshot.sections, (section: import('../../core/media/MediaSection').MediaSection) => {
             Column({ space: 8 }) {
-              Row() {
-                Text(snapshot.sourceName.length > 0 ? snapshot.sourceName + ' · ' + section.title : section.title)
-                  .fontSize(18).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
-                  .layoutWeight(1)
-                Text('浏览').fontSize(12).fontColor($r('app.color.accent_blue'))
-                  .onClick(() => this.openHomeSection(snapshot.sourceId, section.id, section.title))
-              }.width('100%')
+              MediaSectionHeader({
+                title: snapshot.sourceName.length > 0 ? snapshot.sourceName + ' · ' + section.title : section.title,
+                actionText: '浏览',
+                onAction: () => this.openHomeSection(snapshot.sourceId, section.id, section.title)
+              })
               Scroll() {
                 Row({ space: 10 }) {
                   ForEach(section.items.slice(0, 8), (item: MediaItem) => {
@@ -247,272 +376,113 @@ export struct LibraryPage {
 
   @Builder
   private RemoteHomeItem(item: MediaItem): void {
-    Column({ space: 6 }) {
-      Image(item.poster.length > 0 ? item.poster : $r('app.media.ic_placeholder'))
-        .width(132).height(76).objectFit(ImageFit.Cover).borderRadius(10)
-      Text(item.title).fontSize(13).fontColor($r('app.color.text_primary')).maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
-      Text(item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'))
-        .fontSize(11).fontColor($r('app.color.text_secondary')).maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
-    }.width(132).alignItems(HorizontalAlign.Start).onClick(() => this.openHomeItem(item))
-  }
-
-  @Builder
-  private QuickActionsSection(): void {
-    Row({ space: 10 }) {
-      Button('打开视频')
-        .layoutWeight(1)
-        .height(42)
-        .fontSize(14)
-        .fontColor($r('app.color.text_on_primary'))
-        .backgroundColor($r('app.color.accent_blue'))
-        .borderRadius(12)
-        .onClick(() => this.openPlaybackHistoryPage())
-      Button('添加媒体源')
-        .layoutWeight(1)
-        .height(42)
-        .fontSize(14)
-        .fontColor($r('app.color.accent_blue'))
-        .backgroundColor($r('app.color.button_ghost_bg'))
-        .borderRadius(12)
-        .onClick(() => router.pushUrl({ url: 'pages/sources/AddSourcePage' }))
+    if (this.isPosterHomeItem(item)) {
+      MediaPosterCard({
+        title: item.title,
+        subtitle: item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'),
+        artworkUrl: item.poster,
+        onCardClick: () => {
+          void this.openHomeItem(item)
+        }
+      })
+    } else {
+      MediaLandscapeCard({
+        title: item.title,
+        subtitle: item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'),
+        artworkUrl: item.poster,
+        positionMs: item.positionMs,
+        durationMs: item.durationMs,
+        onCardClick: () => {
+          void this.openHomeItem(item)
+        }
+      })
     }
-    .width('100%')
-    .margin({ top: 14 })
-  }
-
-  @Builder
-  private MediaSourcesSection(): void {
-    Column({ space: 10 }) {
-      Row() {
-        Text('媒体来源').fontSize(20).fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary')).layoutWeight(1).margin({ top: 24 })
-        Text('管理').fontSize(13).fontColor($r('app.color.accent_blue'))
-          .margin({ top: 24 }).onClick(() => router.pushUrl({ url: 'pages/sources/SourceManagerPage' }))
-      }.width('100%')
-      if (this.mediaSources.length > 0) {
-        Scroll() {
-          Row({ space: 10 }) {
-            ForEach(this.mediaSources, (source: MediaSourceInstance) => {
-              Column({ space: 6 }) {
-                SymbolGlyph(source.providerType === 'local' ? $r('sys.symbol.folder') :
-                  $r('sys.symbol.play_round_rectangle')).fontSize(25)
-                  .fontColor([$r('app.color.accent_blue')])
-                Text(source.name).fontSize(14).fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_primary')).maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
-                Text(this.sourceStatus(source)).fontSize(11).fontColor($r('app.color.text_secondary'))
-                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
-              }.width(150).height(96).padding(12).alignItems(HorizontalAlign.Start)
-                .borderRadius(14).backgroundColor($r('app.color.card_background'))
-                .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-                .enabled(source.enabled || source.providerType === 'local')
-                .opacity(source.enabled || source.providerType === 'local' ? 1 : 0.55)
-                .onClick(() => this.openSource(source))
-            }, (source: MediaSourceInstance) => 'home_source_' + source.id)
-          }.padding({ right: 24 })
-        }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
-          .width('calc(100% + 16vp)').margin({ right: -16 })
-      }
-    }.width('100%')
   }
 
   private sourceStatus(source: MediaSourceInstance): string {
-    if (source.providerType === 'local') return '本机文件夹 · 已启用'
-    const descriptor = ProviderCatalog.get(source.providerType)
-    const label = descriptor === null || descriptor.displayName.length === 0 ? source.providerType : descriptor.displayName
-    return label +
-      (source.enabled ? ' · 已启用' : ' · 已停用')
+    if (source.providerType === 'local' || source.enabled) return ''
+    return '已停用'
+  }
+
+  private quickAccessSources(): MediaSourceInstance[] {
+    const result: MediaSourceInstance[] = []
+    for (let i = 0; i < this.mediaSources.length; i++) {
+      if (this.mediaSources[i].providerType !== 'local' && this.mediaSources[i].id !== 'local') {
+        result.push(this.mediaSources[i])
+      }
+    }
+    return result
+  }
+
+  @Builder
+  private LocalMediaSectionV2(): void {
+    Column({ space: 10 }) {
+      MediaSectionHeader({ title: '本地媒体', actionText: '浏览',
+        onAction: () => this.openFolderPage() })
+      if (this.hideLocalMedia) {
+        this.HiddenCardsHint()
+      } else {
+        if (this.recentLocalEntries().length > 0) {
+          Text('最近文件')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_secondary'))
+          Scroll() {
+            Row({ space: 12 }) {
+              ForEach(this.recentLocalEntries(), (entry: UserFolderEntry) => {
+                this.LocalRecentEntryCard(entry)
+              }, (entry: UserFolderEntry) => 'home_local_recent_' + entry.relativePath)
+            }
+            .padding({ right: 24 })
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('calc(100% + 16vp)')
+          .margin({ right: -16 })
+        }
+        if (this.folderLocalEntries().length > 0) {
+          Text('文件夹')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_secondary'))
+          Scroll() {
+            Row({ space: 12 }) {
+              ForEach(this.folderLocalEntries(), (entry: UserFolderEntry) => {
+                this.RootFolderEntryGridCard(entry)
+              }, (entry: UserFolderEntry) => 'home_local_folder_' + entry.relativePath)
+            }
+            .padding({ right: 24 })
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('calc(100% + 16vp)')
+          .margin({ right: -16 })
+        }
+        if (this.recentLocalEntries().length === 0 && this.folderLocalEntries().length === 0) {
+          this.LocalMediaEmptyCard()
+        }
+      }
+    }
+    .width('100%')
+    .margin({ top: AppSpacing.SECTION, bottom: AppSpacing.SECTION_COMPACT })
+  }
+
+  @Builder
+  private LocalRecentEntryCard(entry: UserFolderEntry): void {
+    MediaLandscapeCard({
+      title: entry.name,
+      subtitle: this.buildRootFolderEntryStatus(entry),
+      artworkUrl: entry.video.coverUri,
+      positionMs: entry.video.positionMs,
+      durationMs: entry.video.durationMs,
+      onCardClick: () => this.openRootFolderEntry(entry)
+    })
   }
 
   private openSource(source: MediaSourceInstance): void {
     const descriptor = ProviderCatalog.get(source.providerType)
     if (descriptor === null || descriptor.browserRoute.length === 0) return
     void router.pushUrl({ url: descriptor.browserRoute, params: descriptor.browserParams(source.id) })
-  }
-
-  @Builder
-  private ContinueWatchingSection(): void {
-    Column() {
-      Row() {
-        Text('继续观看')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-        SymbolGlyph(this.hideContinueWatching ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye'))
-          .fontSize(22)
-          .fontColor([$r('app.color.text_secondary')])
-          .margin({ right: 12 })
-          .onClick(() => this.toggleContinueWatchingVisibility())
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(22)
-          .fontColor([$r('app.color.text_secondary')])
-          .padding({ left: 12, top: 10, right: 0, bottom: 10 })
-          .onClick(() => this.openPlaybackHistoryPage())
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      if (this.hideContinueWatching) {
-        this.HiddenCardsHint()
-      } else if (this.getHomeHistory().length === 1) {
-        Row() {
-          ForEach(this.getHomeHistory(), (record: PlaybackHistoryViewItem) => {
-            this.ContinueWatchingCard(record)
-          }, (record: PlaybackHistoryViewItem) => 'home_continue_' + record.key + '_' + record.artworkRef + '_' + record.positionMs)
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Start)
-      } else {
-        Scroll() {
-          Row({ space: 12 }) {
-            ForEach(this.getHomeHistory(), (record: PlaybackHistoryViewItem) => {
-              this.ContinueWatchingCard(record)
-            }, (record: PlaybackHistoryViewItem) => 'home_continue_' + record.key + '_' + record.artworkRef + '_' + record.positionMs)
-          }
-          .padding({ right: 24 })
-        }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
-        .width('calc(100% + 16vp)')
-        .margin({ right: -16 })
-      }
-    }
-    .width('100%')
-    .margin({ top: 12 })
-  }
-
-  @Builder
-  private ContinueWatchingCard(record: PlaybackHistoryViewItem): void {
-    Column({ space: 8 }) {
-      Stack({ alignContent: Alignment.BottomStart }) {
-        Image(record.artworkUrl.length > 0 ? record.artworkUrl : $r('app.media.ic_placeholder'))
-          .draggable(false)
-          .width(176)
-          .height(99)
-          .objectFit(ImageFit.Cover)
-          .borderRadius(12)
-          .opacity(record.artworkUrl.length > 0 ? 1 : 0.82)
-
-        if (record.durationMs > 0) {
-          Progress({
-            value: Math.min(record.positionMs, record.durationMs),
-            total: record.durationMs,
-            type: ProgressType.Linear
-          })
-            .width(152)
-            .height(3)
-            .color($r('app.color.accent_blue'))
-            .backgroundColor('#66000000')
-            .margin({ left: 12, bottom: 8 })
-        }
-      }
-      .width(176)
-      .height(99)
-
-      Text(record.title)
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width(176)
-        .height(40)
-      Text(this.watchSummary(record))
-        .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width(176)
-    }
-    .width(176)
-    .onClick(() => this.openHistoryRecord(record))
-  }
-
-  @Builder
-  private HomeEmptyState(): void {
-    Column() {
-      Stack({ alignContent: Alignment.Center }) {
-        Circle()
-          .width(64)
-          .height(64)
-          .fill($r('app.color.accent_blue'))
-          .opacity(0.12)
-        SymbolGlyph($r('sys.symbol.play_fill'))
-          .fontSize(28)
-          .fontColor([$r('app.color.accent_blue')])
-      }
-      .width(72)
-      .height(72)
-
-      Text('还没有播放内容')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .margin({ top: 16 })
-      Text('将视频放入应用专属目录后即可播放，进度会自动保存')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .textAlign(TextAlign.Center)
-        .margin({ top: 8 })
-    }
-    .width('100%')
-    .padding({ top: 40, bottom: 36, left: 24, right: 24 })
-    .borderRadius(16)
-    .backgroundColor($r('app.color.card_background'))
-    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-    .alignItems(HorizontalAlign.Center)
-    .margin({ top: 18 })
-  }
-
-  @Builder
-  private LocalMediaSection(): void {
-    Column({ space: 12 }) {
-      Row() {
-        Text('本地媒体')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-        SymbolGlyph(this.hideLocalMedia ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye'))
-          .fontSize(22)
-          .fontColor([$r('app.color.text_secondary')])
-          .margin({ right: 12 })
-          .onClick(() => this.toggleLocalMediaVisibility())
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(22)
-          .fontColor([$r('app.color.text_secondary')])
-          .padding({ left: 12, top: 10, right: 0, bottom: 10 })
-          .onClick(() => this.openFolderPage())
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      if (this.hideLocalMedia) {
-        this.HiddenCardsHint()
-      } else if (this.rootFolderEntries.length > 0) {
-        Scroll() {
-          Row({ space: 12 }) {
-            ForEach(this.rootFolderEntries, (entry: UserFolderEntry) => {
-              this.RootFolderEntryGridCard(entry)
-            }, (entry: UserFolderEntry) => entry.relativePath + '_' + entry.video.coverUri + '_' +
-              this.rootFolderCoverRenderVersion)
-          }
-          .padding({ right: 24 })
-        }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
-        .width('calc(100% + 16vp)')
-        .margin({ right: -16 })
-      } else {
-        this.LocalMediaEmptyCard()
-      }
-
-    }
-    .width('100%')
-    .margin({ top: this.continueWatching.length > 0 ? 28 : 24, bottom: 24 })
   }
 
   @Builder
@@ -626,6 +596,11 @@ export struct LibraryPage {
     } catch (err) {
       logger.warn('打开首页推荐失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
+  }
+
+  private isPosterHomeItem(item: MediaItem): boolean {
+    return item.type === MediaItemType.MOVIE || item.type === MediaItemType.SERIES ||
+      item.type === MediaItemType.SEASON
   }
 
   private async openHomeSection(sourceId: string, sectionId: string, sectionTitle: string = ''): Promise<void> {
@@ -932,6 +907,27 @@ export struct LibraryPage {
     return entries
   }
 
+  private recentLocalEntries(): UserFolderEntry[] {
+    const entries: UserFolderEntry[] = []
+    for (let i = 0; i < this.rootFolderEntries.length; i++) {
+      if (!this.rootFolderEntries[i].isDirectory) entries.push(this.rootFolderEntries[i])
+    }
+    entries.sort((left: UserFolderEntry, right: UserFolderEntry): number => {
+      const leftPlayedAt = left.video.lastPlayedAt > 0 ? left.video.lastPlayedAt : left.video.createdAt
+      const rightPlayedAt = right.video.lastPlayedAt > 0 ? right.video.lastPlayedAt : right.video.createdAt
+      return rightPlayedAt - leftPlayedAt
+    })
+    return entries.slice(0, 8)
+  }
+
+  private folderLocalEntries(): UserFolderEntry[] {
+    const entries: UserFolderEntry[] = []
+    for (let i = 0; i < this.rootFolderEntries.length; i++) {
+      if (this.rootFolderEntries[i].isDirectory) entries.push(this.rootFolderEntries[i])
+    }
+    return entries
+  }
+
   private buildRootFolderEntryStatus(entry: UserFolderEntry): string {
     if (!entry.isDirectory) {
       const item = this.toHistoryViewItemFromLocal(entry.video)
@@ -1097,6 +1093,18 @@ export struct LibraryPage {
     router.pushUrl({ url: 'pages/local/ContinueWatchingPage' })
   }
 
+  private async openVideoFile(): Promise<void> {
+    const context = getContext(this) as common.UIAbilityContext
+    const result = await LocalFilePicker.pickVideoFile(context)
+    if (result === null) return
+    const record = new LocalVideoRecord()
+    record.fileUri = result.uri
+    record.fileName = result.fileName
+    record.fileSize = result.fileSize
+    record.positionMs = 0
+    await LocalPlaybackLauncher.open(this.getUIContext(), record, [record], true)
+  }
+
   private async openHistoryRecord(item: PlaybackHistoryViewItem, queue: LocalVideoRecord[] = this.localHistory): Promise<void> {
     if (item.sourceId !== 'local') {
       try {
@@ -1117,6 +1125,48 @@ export struct LibraryPage {
       result.push(this.continueWatching[i])
     }
     return result
+  }
+
+  private getHeroHistory(): PlaybackHistoryViewItem | null {
+    if (this.hideContinueWatching) return null
+    const records = this.getHomeHistory()
+    return records.length > 0 ? records[0] : null
+  }
+
+  private heroTitle(): string {
+    const record = this.getHeroHistory()
+    return record === null ? '' : record.title
+  }
+
+  private heroSubtitle(): string {
+    const record = this.getHeroHistory()
+    return record === null ? '' : (record.subtitle.length > 0 ? record.subtitle : this.watchSummary(record))
+  }
+
+  private heroArtworkUrl(): string {
+    const record = this.getHeroHistory()
+    return record === null ? '' : record.artworkUrl
+  }
+
+  private heroPositionMs(): number {
+    const record = this.getHeroHistory()
+    return record === null ? 0 : record.positionMs
+  }
+
+  private heroDurationMs(): number {
+    const record = this.getHeroHistory()
+    return record === null ? 0 : record.durationMs
+  }
+
+  private openHeroHistory(): void {
+    const record = this.getHeroHistory()
+    if (record !== null) void this.openHistoryRecord(record)
+  }
+
+  private getSecondaryHistory(): PlaybackHistoryViewItem[] {
+    if (this.hideContinueWatching) return []
+    const records = this.getHomeHistory()
+    return records.length > 1 ? records.slice(1) : []
   }
 
   private watchSummary(record: PlaybackHistoryViewItem): string {

@@ -7,12 +7,15 @@ import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
 import { ProviderCapability } from '../../core/media/ProviderCapabilities'
 import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
-import { buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { buildTitleBarOptions, getContentMaxWidth, isTabletLayout,
+  HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { AppSpacing } from '../../ui/theme/AppSpacing'
 
 @Entry
 @Component
 struct SourceBrowserPage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
+  @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @State private sourceId: string = ''
   @State private parentId: string = ''
   @State private title: string = '媒体源'
@@ -46,7 +49,7 @@ struct SourceBrowserPage {
         if (this.breadcrumb.length > 0) {
           Text(this.breadcrumb).fontSize(12).fontColor($r('app.color.text_secondary'))
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%').padding({ left: 16, right: 16, bottom: 8 })
+            .width('100%').padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE, bottom: AppSpacing.SMALL })
         }
         if (this.loading) {
           LoadingProgress().width(36).height(36).margin({ top: 60 })
@@ -56,8 +59,7 @@ struct SourceBrowserPage {
             Button('重试').onClick(() => this.loadItems())
           }.width('100%').padding(32).alignItems(HorizontalAlign.Center)
         } else if (this.visibleItems().length === 0) {
-          Text(this.searchText.length > 0 ? '没有匹配的媒体' : '此目录暂无媒体')
-            .fontSize(15).fontColor($r('app.color.text_secondary')).margin({ top: 60 })
+          this.EmptyBrowserState()
         } else {
           Scroll() {
             if (this.gridMode) {
@@ -72,9 +74,12 @@ struct SourceBrowserPage {
                   (item: MediaItem) => 'list_' + item.sourceId + '_' + item.id)
               }.width('100%')
             }
-          }.width('100%').layoutWeight(1).scrollBar(BarState.Off).padding(16)
+          }.width('100%').layoutWeight(1).scrollBar(BarState.Off)
+            .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+              right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+              bottom: AppSpacing.SECTION })
         }
-      }.width('100%').height('100%')
+    }.width('100%').height('100%')
     }.width('100%').height('100%').mode(NavigationMode.Stack)
       .titleBar(buildTitleBarOptions(this.title, this.hdsMaterialLevel))
       .titleMode(HdsNavigationTitleMode.MINI).hideBackButton(false).backgroundColor(Color.Transparent)
@@ -99,7 +104,26 @@ struct SourceBrowserPage {
         Button('刷新').height(34).fontSize(12).backgroundColor(Color.Transparent)
           .onClick(() => this.loadItems())
       }.width('100%')
-    }.width('100%').padding({ left: 16, right: 16, top: 10, bottom: 4 })
+    }.width('100%').constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+      .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+        right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+        top: AppSpacing.SMALL, bottom: 4 })
+      .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  private EmptyBrowserState(): void {
+    Column({ space: 10 }) {
+      SymbolGlyph(this.searchText.length > 0 ? $r('sys.symbol.magnifyingglass') : $r('sys.symbol.folder'))
+        .fontSize(32)
+        .fontColor([$r('app.color.accent_blue')])
+      Text(this.searchText.length > 0 ? '没有匹配的媒体' : '此目录暂无媒体')
+        .fontSize(16)
+        .fontColor($r('app.color.text_secondary'))
+    }
+    .width('100%')
+    .padding({ top: 52, bottom: 52 })
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
