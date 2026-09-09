@@ -12,7 +12,7 @@ import {
 import { LocalFilePicker } from '../../services/LocalFilePicker'
 import { LocalVideoThumbnailStore } from '../../services/LocalVideoThumbnailStore'
 import { LocalVideoRecord } from '../../models/LocalVideoRecord'
-import { PlaybackQueueCodec } from '../../models/PlaybackQueueItem'
+import { LocalPlaybackLauncher } from '../../services/LocalPlaybackLauncher'
 import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
 import { LOCAL_VIDEO_HISTORY_VERSION_KEY } from '../../store/LocalVideoHistoryChangeSignal'
 import { LOCAL_MEDIA_LIBRARY_VERSION_KEY } from '../../store/LocalMediaLibraryChangeSignal'
@@ -491,8 +491,8 @@ struct FolderPage {
           .borderRadius(24)
           .clip(true)
           .onClick(() => this.openVideo(record))
-        }, (record: LocalVideoRecord) => 'folder_cover_' + record.fileUri + '_' + record.fileSize + '_' +
-          record.coverUri + '_' + this.folderCoverRenderVersion)
+        }, (record: LocalVideoRecord) => 'folder_cover_' + this.safeText(record.fileUri) + '_' +
+          this.safeNumber(record.fileSize) + '_' + this.safeText(record.coverUri) + '_' + this.folderCoverRenderVersion)
       }
       .width('100%')
       .height(224)
@@ -1105,30 +1105,8 @@ struct FolderPage {
   }
 
   private async openVideo(record: LocalVideoRecord): Promise<void> {
-    if (!await LocalFilePicker.ensureReadableUri(record.fileUri)) {
-      return
-    }
     const latest = this.appRdbReady ? await this.resolveLatestRecord(record) : record
-    const queue = this.getDirectVideoQueue()
-    let index = 0
-    for (let i = 0; i < queue.length; i++) {
-      if (queue[i].fileUri === latest.fileUri && queue[i].fileSize === latest.fileSize) {
-        index = i
-        break
-      }
-    }
-    router.pushUrl({
-      url: 'pages/player/LocalPlayerPage',
-      params: {
-        videoUri: latest.fileUri,
-        videoFileName: latest.fileName,
-        videoFileSize: latest.fileSize,
-        historyPositionMs: latest.positionMs,
-        historyDurationMs: latest.durationMs,
-        playlistJson: PlaybackQueueCodec.encode(queue),
-        queueIndex: index
-      }
-    })
+    await LocalPlaybackLauncher.open(this.getUIContext(), latest, this.getDirectVideoQueue())
   }
 
   private getDirectVideoQueue(): LocalVideoRecord[] {
@@ -1155,15 +1133,17 @@ struct FolderPage {
   }
 
   private fileKey(record: LocalVideoRecord): string {
-    return record.fileKey.length > 0 ? record.fileKey :
-      record.fileUri + '|' + record.fileSize + '|' + record.fileName
+    const storedKey = this.safeText(record.fileKey).trim()
+    return storedKey.length > 0 ? storedKey :
+      this.safeText(record.fileUri) + '|' + this.safeNumber(record.fileSize) + '|' + this.safeText(record.fileName)
   }
 
   private formatFileSize(size: number): string {
-    if (size <= 0) {
+    const normalizedSize = this.safeNumber(size)
+    if (normalizedSize <= 0) {
       return '未知大小'
     }
-    const mb = size / 1024 / 1024
+    const mb = normalizedSize / 1024 / 1024
     return mb < 1024 ? mb.toFixed(mb >= 100 ? 0 : 1) + ' MB' :
       (mb / 1024).toFixed(mb >= 102400 ? 0 : 1) + ' GB'
   }
@@ -1175,5 +1155,13 @@ struct FolderPage {
     const remainSeconds = seconds % 60
     return hours > 0 ? hours + ':' + String(minutes).padStart(2, '0') + ':' + String(remainSeconds).padStart(2, '0') :
       String(minutes).padStart(2, '0') + ':' + String(remainSeconds).padStart(2, '0')
+  }
+
+  private safeText(value: string): string {
+    return typeof value === 'string' ? value : ''
+  }
+
+  private safeNumber(value: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
   }
 }

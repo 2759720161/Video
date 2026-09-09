@@ -9,6 +9,7 @@ export class RdbManager {
   private static instance: RdbManager | null = null;
   private rdbStore: relationalStore.RdbStore | null = null;
   private context: Context | null = null;
+  private initTask: Promise<relationalStore.RdbStore> | null = null;
 
   private constructor() {}
 
@@ -20,12 +21,18 @@ export class RdbManager {
   }
 
   init(context: Context): Promise<relationalStore.RdbStore> {
+    if (this.rdbStore !== null) {
+      return Promise.resolve(this.rdbStore);
+    }
+    if (this.initTask !== null) {
+      return this.initTask;
+    }
     this.context = context;
     const config: relationalStore.StoreConfig = {
       name: RdbConstants.DB_NAME,
       securityLevel: relationalStore.SecurityLevel.S1
     };
-    return relationalStore.getRdbStore(context, config).then(async (store: relationalStore.RdbStore) => {
+    const task = relationalStore.getRdbStore(context, config).then(async (store: relationalStore.RdbStore) => {
       this.rdbStore = store;
       const currentVersion = store.version;
       if (currentVersion < RdbConstants.DB_VERSION) {
@@ -40,9 +47,17 @@ export class RdbManager {
       logger.info('RdbStore initialized at version %{public}d', RdbConstants.DB_VERSION);
       return store;
     }).catch((err: Error) => {
+      this.rdbStore = null;
       logger.error('Failed to init RdbStore: %{public}s', err.message);
       throw new Error('Failed to init RdbStore: ' + err.message);
     });
+    this.initTask = task;
+    task.catch(() => {
+      if (this.initTask === task) {
+        this.initTask = null;
+      }
+    });
+    return task;
   }
 
   getStore(): relationalStore.RdbStore {

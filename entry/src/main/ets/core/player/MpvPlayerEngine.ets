@@ -339,6 +339,10 @@ export class MpvPlayerEngine implements IPlayerEngine {
       return
     }
     try {
+      // The native context is reused between queue items. Reapply all
+      // per-stream options before loading the replacement so headers from a
+      // previous WebDAV/remote source cannot leak into the next request.
+      this.applyMpvOptions(options)
       this.latestTracks = []
       this.isAwaitingFileLoaded = true
       this.pendingReloadUrl = loadUrl
@@ -498,8 +502,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
       return
     }
     try {
+      const normalizedPositionMs = this.normalizeSeekPosition(positionMs)
       if (this.isAwaitingFileLoaded) {
-        this.pendingFileLoadedSeekMs = Math.max(0, positionMs)
+        this.pendingFileLoadedSeekMs = normalizedPositionMs
         this.state.positionMs = this.pendingFileLoadedSeekMs
         this.state.completed = false
         this.state.stateName = 'preparing'
@@ -508,7 +513,7 @@ export class MpvPlayerEngine implements IPlayerEngine {
           this.diagId, this.pendingFileLoadedSeekMs)
         return
       }
-      const positionSec = positionMs / 1000
+      const positionSec = normalizedPositionMs / 1000
       const resumeFromEof = this.state.completed || this.state.stateName === 'completed'
       // mpv_command() waits for the core thread to finish processing the
       // command. During a hardware-decoder flush this can take several
@@ -518,10 +523,10 @@ export class MpvPlayerEngine implements IPlayerEngine {
       // while the UI thread returns immediately.
       const seekErr = napi.nativeCommandAsync(this.ctxId, ['seek', String(positionSec), 'absolute'])
       if (seekErr < 0) {
-        logger.warn('mpv async seek enqueue failed: position=%{public}dms err=%{public}d', positionMs, seekErr)
+        logger.warn('mpv async seek enqueue failed: position=%{public}dms err=%{public}d', normalizedPositionMs, seekErr)
         return
       }
-      this.state.positionMs = positionMs
+      this.state.positionMs = normalizedPositionMs
       this.state.completed = false
       if (resumeFromEof) {
         const resumeErr = napi.nativeCommandAsync(this.ctxId, ['set', 'pause', 'no'])
@@ -536,6 +541,16 @@ export class MpvPlayerEngine implements IPlayerEngine {
     } catch (_err) {
       logger.error('mpv seek failed')
     }
+  }
+
+  private normalizeSeekPosition(value: number): number {
+    const positionMs = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+    const durationMs = this.normalizeDurationMs(this.state.durationMs)
+    return durationMs > 0 ? Math.min(positionMs, durationMs) : positionMs
+  }
+
+  private normalizeDurationMs(value: number): number {
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
   }
 
   setSpeed(speed: number): void {
@@ -926,14 +941,15 @@ export class MpvPlayerEngine implements IPlayerEngine {
         this.clearPrepareTimeout()
         const deferredSeekMs = this.pendingFileLoadedSeekMs
         this.pendingFileLoadedSeekMs = 0
-        if (deferredSeekMs > 0) {
+        const normalizedDeferredSeekMs = this.normalizeSeekPosition(deferredSeekMs)
+        if (normalizedDeferredSeekMs > 0) {
           const seekErr = napi !== null
-            ? napi.nativeCommandAsync(this.ctxId, ['seek', String(deferredSeekMs / 1000), 'absolute']) : -1
+            ? napi.nativeCommandAsync(this.ctxId, ['seek', String(normalizedDeferredSeekMs / 1000), 'absolute']) : -1
           if (seekErr < 0) {
             logger.warn('mpv deferred seek enqueue failed: position=%{public}dms err=%{public}d',
-              deferredSeekMs, seekErr)
+              normalizedDeferredSeekMs, seekErr)
           } else {
-            this.state.positionMs = deferredSeekMs
+            this.state.positionMs = normalizedDeferredSeekMs
           }
         }
         const pauseAfterLoad = this.pendingPauseAfterFileLoaded
@@ -952,7 +968,7 @@ export class MpvPlayerEngine implements IPlayerEngine {
         logger.info('CrashDiag mpv event: id=%{public}d urlHash=%{public}s event=file-loaded elapsed=%{public}dms ' +
           'loadfileElapsed=%{public}dms deferredSeekMs=%{public}d paused=%{public}s',
           this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), this.elapsedSinceLoadfile(),
-          deferredSeekMs, String(pauseAfterLoad))
+          normalizedDeferredSeekMs, String(pauseAfterLoad))
         logger.info('mpv event: file-loaded')
         break
 
@@ -1056,10 +1072,10 @@ export class MpvPlayerEngine implements IPlayerEngine {
           break
         }
         if (event.propertyValueDouble >= 0) {
-          this.state.positionMs = Math.max(0, Math.round(event.propertyValueDouble * 1000))
+          this.state.positionMs = this.normalizeSeekPosition(Math.round(event.propertyValueDouble * 1000))
           // The HarmonyOS GPU/OHCodec backend can hold the final frame without
           // emitting eof-reached or END_FILE. Convert the final time-pos sample
-          // into one completion event so LocalPlayerPage can advance the queue.
+          // into one completion event so PlayerPage can advance the queue.
           if (!this.state.completed && this.state.playing && this.state.durationMs > 0 &&
             this.state.positionMs >= this.state.durationMs - EOF_COMPLETION_TOLERANCE_MS) {
             this.state.positionMs = this.state.durationMs
@@ -1077,7 +1093,8 @@ export class MpvPlayerEngine implements IPlayerEngine {
           break
         }
         if (event.propertyValueDouble > 0) {
-          this.state.durationMs = Math.max(0, Math.round(event.propertyValueDouble * 1000))
+          this.state.durationMs = this.normalizeDurationMs(Math.round(event.propertyValueDouble * 1000))
+          this.state.positionMs = this.normalizeSeekPosition(this.state.positionMs)
           logger.info('mpv duration updated: %{public}dms', this.state.durationMs)
         }
         break
@@ -1217,12 +1234,18 @@ export class MpvPlayerEngine implements IPlayerEngine {
       let headerErr = 0
       if (options.referer.length > 0) {
         referrerErr = napi.nativeSetProperty(this.ctxId, 'referrer', options.referer)
+      } else {
+        referrerErr = napi.nativeSetProperty(this.ctxId, 'referrer', '')
       }
       if (options.userAgent.length > 0) {
         userAgentErr = napi.nativeSetProperty(this.ctxId, 'user-agent', options.userAgent)
+      } else {
+        userAgentErr = napi.nativeSetProperty(this.ctxId, 'user-agent', '')
       }
       if (options.proxy.length > 0) {
         proxyErr = napi.nativeSetProperty(this.ctxId, 'http-proxy', options.proxy)
+      } else {
+        proxyErr = napi.nativeSetProperty(this.ctxId, 'http-proxy', '')
       }
       if (options.streamMetadata !== null && !options.streamMetadata.isEmpty()) {
         logger.info('mpv stream metadata: %{public}s', options.streamMetadata.summary())
@@ -1234,21 +1257,19 @@ export class MpvPlayerEngine implements IPlayerEngine {
         }
       }
       const headerKeys = Object.keys(options.headers)
-      if (headerKeys.length > 0) {
-        const headerParts: string[] = []
-        for (let i = 0; i < headerKeys.length; i++) {
-          const key = headerKeys[i]
-          const headerLine = this.buildSafeMpvHeaderLine(key, options.headers[key])
-          if (headerLine.length > 0) {
-            headerParts.push(headerLine)
-          }
-        }
-        if (headerParts.length > 0) {
-          headerErr = napi.nativeSetProperty(this.ctxId, 'http-header-fields', headerParts.join(','))
-          logger.info('mpv http headers applied: count=%{public}d names=%{public}s',
-            headerParts.length, this.describeHeaderNames(headerParts))
+      const headerParts: string[] = []
+      for (let i = 0; i < headerKeys.length; i++) {
+        const key = headerKeys[i]
+        const headerLine = this.buildSafeMpvHeaderLine(key, options.headers[key])
+        if (headerLine.length > 0) {
+          headerParts.push(headerLine)
         }
       }
+      // Always write the property, including an empty value, to clear
+      // credentials from the previous stream when the new stream has none.
+      headerErr = napi.nativeSetProperty(this.ctxId, 'http-header-fields', headerParts.join(','))
+      logger.info('mpv http headers applied: count=%{public}d names=%{public}s',
+        headerParts.length, this.describeHeaderNames(headerParts))
       logger.info('CrashDiag mpv options result: id=%{public}d urlHash=%{public}s msgLevelErr=%{public}d ' +
         'referrer=%{public}s/%{public}d userAgent=%{public}s/%{public}d proxy=%{public}s/%{public}d ' +
         'headers=%{public}s/%{public}d deferredSeekMs=%{public}d',
@@ -1283,11 +1304,14 @@ export class MpvPlayerEngine implements IPlayerEngine {
     if (headerValue.length === 0) {
       return ''
     }
-    if (headerValue.indexOf('\r') >= 0 || headerValue.indexOf('\n') >= 0 || headerValue.indexOf(',') >= 0) {
+    if (headerValue.indexOf('\r') >= 0 || headerValue.indexOf('\n') >= 0) {
       logger.warn('Skip unsafe mpv http header: %{public}s', headerName)
       return ''
     }
-    return `${headerName}: ${headerValue}`
+    // http-header-fields is a comma-separated string list. Escape separators
+    // in values such as Digest Authorization before joining multiple fields.
+    const escapedValue = headerValue.replace(/\\/g, '\\\\').replace(/,/g, '\\,')
+    return `${headerName}: ${escapedValue}`
   }
 
   private normalizeMpvHeaderName(key: string): string {
@@ -1297,15 +1321,31 @@ export class MpvPlayerEngine implements IPlayerEngine {
         return 'Cookie'
       case 'origin':
         return 'Origin'
+      case 'authorization':
+        return 'Authorization'
       case 'accept':
         return 'Accept'
+      case 'accept-encoding':
+        return 'Accept-Encoding'
+      case 'range':
+        return 'Range'
       case 'referer':
       case 'referrer':
         return 'Referer'
       case 'user-agent':
         return 'User-Agent'
       default:
-        return ''
+        // Keep provider-specific token headers while rejecting separators that
+        // could inject a second field into mpv's comma-separated header list.
+        const custom = key.trim()
+        if (custom.length === 0) return ''
+        for (let i = 0; i < custom.length; i++) {
+          const code = custom.charCodeAt(i)
+          const alphaNumeric = (code >= 48 && code <= 57) ||
+            (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+          if (!alphaNumeric && custom[i] !== '-' && custom[i] !== '_') return ''
+        }
+        return custom
     }
   }
 

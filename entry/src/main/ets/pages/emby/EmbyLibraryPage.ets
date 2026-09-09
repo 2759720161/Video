@@ -1,8 +1,12 @@
+import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { promptAction } from '@kit.ArkUI'
+import { common } from '@kit.AbilityKit'
 import { HdsNavigation, HdsNavigationIconOptions, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
-import { EmbyItem, EmbyPlaybackRoute, EmbyServerConfig } from '../../models/EmbyModels'
-import { EmbyClient } from '../../network/EmbyClient'
-import { EmbyServerStore } from '../../store/EmbyServerStore'
+import { EmbyItem, EmbyServerConfig } from '../../providers/emby/EmbyModels'
+import { EmbyProvider } from '../../providers/emby/EmbyProvider'
+import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
+import { MediaSourceStore } from '../../store/MediaSourceStore'
+import { EmbySourceConfigCodec } from '../../providers/emby/EmbySourceConfig'
 import { PreferencesStore } from '../../store/PreferencesStore'
 import { buildImmersiveTitleBarStyle, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL, getTopSpacerHeight } from '../../utils/HdsPageStyle'
 
@@ -34,11 +38,14 @@ struct EmbyLibraryPage {
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
   @State private title: string = 'Emby'
+  @State private sourceId: string = ''
+  @State private pendingItemId: string = ''
   @State private parentId: string = ''
   @State private latestOnly: boolean = false
   @State private libraryRoot: boolean = false
   @State private collectionType: string = ''
   @State private config: EmbyServerConfig | null = null
+  @State private provider: EmbyProvider | null = null
   @State private items: EmbyItem[] = []
   @State private resumeItems: EmbyItem[] = []
   @State private latestItems: EmbyItem[] = []
@@ -54,17 +61,22 @@ struct EmbyLibraryPage {
   @State private pageWidth: number = 360
   private scroller: Scroller = new Scroller()
   private filters: string[] = ['全部', '电影', '剧集', '文件夹']
+  private loadGeneration: number = 0
 
   aboutToAppear(): void {
     const rawParams = this.getUIContext().getRouter().getParams()
     if (rawParams !== null && rawParams !== undefined) {
       const params = rawParams as Record<string, Object>
-      if (typeof params['parentId'] === 'string') this.parentId = params['parentId'] as string
-      if (typeof params['title'] === 'string') this.title = params['title'] as string
+      if (typeof params['parentId'] === 'string') this.parentId = (params['parentId'] as string).trim()
+      if (typeof params['sourceId'] === 'string') this.sourceId = (params['sourceId'] as string).trim()
+      if (typeof params['itemId'] === 'string') this.pendingItemId = (params['itemId'] as string).trim()
+      if (typeof params['title'] === 'string' && (params['title'] as string).trim().length > 0) {
+        this.title = (params['title'] as string).trim()
+      }
       if (params['view'] === 'latest') this.latestOnly = true
       if (params['libraryRoot'] === true || params['libraryRoot'] === 'true') this.libraryRoot = true
       if (typeof params['collectionType'] === 'string') {
-        this.collectionType = params['collectionType'] as string
+        this.collectionType = (params['collectionType'] as string).trim()
       }
     }
     this.loadItems()
@@ -901,47 +913,70 @@ struct EmbyLibraryPage {
   }
 
   private async loadItems(): Promise<void> {
+    const generation = ++this.loadGeneration
     this.loading = true
     this.errorText = ''
     let hasCachedHome = false
     try {
-      this.config = await EmbyServerStore.load()
-      if (this.config === null) {
-        this.errorText = '请先登录 Emby 服务器'
+      if (this.sourceId.length === 0) {
+        this.errorText = '媒体源参数无效，请从媒体来源列表进入'
         return
       }
-      const client = new EmbyClient(this.config!)
+      const source = await MediaSourceStore.getById(this.sourceId)
+      if (generation !== this.loadGeneration) return
+      if (source === null || !source.enabled || source.providerType !== 'emby') {
+        this.errorText = 'Emby 媒体源不可用或已停用'
+        return
+      }
+      this.config = EmbySourceConfigCodec.decode(source.configJson)
+      if (generation !== this.loadGeneration) return
+      if (this.config === null) {
+        this.errorText = 'Emby 媒体源配置无效'
+        return
+      }
+      const registeredProvider = await ProviderRegistry.get(this.sourceId,
+        this.getUIContext().getHostContext() as common.UIAbilityContext)
+      if (!(registeredProvider instanceof EmbyProvider)) {
+        this.errorText = 'Emby 媒体源不可用或已停用'
+        return
+      }
+      this.provider = registeredProvider
       if (this.isHome()) {
         hasCachedHome = await this.restoreHomeCache(this.config!)
+        if (generation !== this.loadGeneration) return
         if (hasCachedHome) {
           this.loading = false
         }
-        this.items = await client.getLibraries()
+        this.items = await this.provider.getLibrariesRaw()
+        if (generation !== this.loadGeneration) return
         const tasks: Array<Promise<EmbyItem[]>> = [
-          this.loadResumeItems(client),
-          this.loadLatestItems(client)
+          this.loadResumeItems(this.provider),
+          this.loadLatestItems(this.provider)
         ]
         const results: EmbyItem[][] = await Promise.all(tasks)
+        if (generation !== this.loadGeneration) return
         this.resumeItems = results[0]
         this.latestItems = results[1]
-        this.homeSections = await this.loadHomeSections(client, this.items)
+        this.homeSections = await this.loadHomeSections(this.provider, this.items)
+        if (generation !== this.loadGeneration) return
         await this.saveHomeCache()
       } else {
         if (this.latestOnly) {
-          this.items = await client.getLatestItems(0)
+          this.items = await this.provider.getLatestItemsRaw(0)
         } else if (this.libraryRoot) {
           // Library entry pages should show media posters, not the server's
           // physical folder tree. Nested item pages keep the old behavior.
-          this.items = await client.getLibraryItems(this.parentId, 0, this.collectionType)
+          this.items = await this.provider.getLibraryItemsRaw(this.parentId, 0, this.collectionType)
         } else {
-          this.items = await client.getItems(this.parentId)
+          this.items = await this.provider.getItemsRaw(this.parentId)
         }
+        if (generation !== this.loadGeneration) return
         this.resumeItems = []
         this.latestItems = []
         this.homeSections = []
       }
     } catch (err) {
-      if (!hasCachedHome) {
+      if (generation === this.loadGeneration && !hasCachedHome) {
         this.items = []
         this.resumeItems = []
         this.latestItems = []
@@ -949,7 +984,23 @@ struct EmbyLibraryPage {
         this.errorText = err instanceof Error ? err.message : 'Emby 媒体库读取失败'
       }
     } finally {
+      if (generation !== this.loadGeneration) return
       this.loading = false
+      if (this.pendingItemId.length > 0 && this.config !== null && this.provider !== null) {
+        void this.openPendingItem()
+      }
+    }
+  }
+
+  private async openPendingItem(): Promise<void> {
+    const itemId = this.pendingItemId
+    this.pendingItemId = ''
+    if (itemId.length === 0 || this.config === null || this.provider === null || this.sourceId.length === 0) return
+    try {
+      const item = await this.provider.getItemRaw(itemId)
+      if (item !== null && !item.isFolder) await this.openItem(item)
+    } catch (err) {
+      promptAction.showToast({ message: err instanceof Error ? err.message : '无法打开远程播放记录' })
     }
   }
 
@@ -962,7 +1013,9 @@ struct EmbyLibraryPage {
     try {
       const raw = await PreferencesStore.getInstance().getString(this.homeCacheKey(config), '')
       if (raw.length === 0) return false
-      const payload = JSON.parse(raw) as Record<string, Object>
+      const parsed = JSON.parse(raw) as Object
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+      const payload = parsed as Record<string, Object>
       const timestamp = typeof payload['timestamp'] === 'number' ? payload['timestamp'] as number : 0
       if (timestamp <= 0) return false
       this.items = this.decodeCachedItems(payload['libraries'])
@@ -995,11 +1048,14 @@ struct EmbyLibraryPage {
     const result: EmbyItem[] = []
     const values = raw as Array<Record<string, Object>>
     for (let i = 0; i < values.length; i++) {
-      const value = values[i]
+      const candidate = values[i] as Object
+      if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+      const value = candidate as Record<string, Object>
       const item = new EmbyItem()
       item.id = this.cachedString(value, 'id')
       item.name = this.cachedString(value, 'name')
       item.type = this.cachedString(value, 'type')
+      item.parentId = this.cachedString(value, 'parentId')
       item.collectionType = this.cachedString(value, 'collectionType')
       item.isFolder = this.cachedBoolean(value, 'isFolder')
       item.runTimeTicks = this.cachedNumber(value, 'runTimeTicks')
@@ -1028,7 +1084,9 @@ struct EmbyLibraryPage {
     const result: EmbyHomeSection[] = []
     const values = raw as Array<Record<string, Object>>
     for (let i = 0; i < values.length; i++) {
-      const value = values[i]
+      const candidate = values[i] as Object
+      if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+      const value = candidate as Record<string, Object>
       const section = new EmbyHomeSection()
       section.id = this.cachedString(value, 'id')
       section.title = this.cachedString(value, 'title')
@@ -1044,33 +1102,33 @@ struct EmbyLibraryPage {
   }
 
   private cachedNumber(value: Record<string, Object>, key: string): number {
-    return typeof value[key] === 'number' ? value[key] as number : 0
+    return typeof value[key] === 'number' && Number.isFinite(value[key] as number) ? value[key] as number : 0
   }
 
   private cachedBoolean(value: Record<string, Object>, key: string): boolean {
     return typeof value[key] === 'boolean' ? value[key] as boolean : false
   }
 
-  private async loadResumeItems(client: EmbyClient): Promise<EmbyItem[]> {
+  private async loadResumeItems(provider: EmbyProvider): Promise<EmbyItem[]> {
     try {
-      return await client.getResumeItems()
+      return await provider.getResumeItemsRaw()
     } catch {
       return []
     }
   }
 
-  private async loadLatestItems(client: EmbyClient): Promise<EmbyItem[]> {
+  private async loadLatestItems(provider: EmbyProvider): Promise<EmbyItem[]> {
     try {
-      return await client.getLatestItems()
+      return await provider.getLatestItemsRaw()
     } catch {
       return []
     }
   }
 
-  private async loadHomeSections(client: EmbyClient, libraries: EmbyItem[]): Promise<EmbyHomeSection[]> {
+  private async loadHomeSections(provider: EmbyProvider, libraries: EmbyItem[]): Promise<EmbyHomeSection[]> {
     const tasks: Array<Promise<EmbyItem[]>> = []
     for (let i = 0; i < libraries.length; i++) {
-      tasks.push(this.loadLibraryPreview(client, libraries[i]))
+      tasks.push(this.loadLibraryPreview(provider, libraries[i]))
     }
     const previews: EmbyItem[][] = await Promise.all(tasks)
     const sections: EmbyHomeSection[] = []
@@ -1087,9 +1145,9 @@ struct EmbyLibraryPage {
     return sections
   }
 
-  private async loadLibraryPreview(client: EmbyClient, library: EmbyItem): Promise<EmbyItem[]> {
+  private async loadLibraryPreview(provider: EmbyProvider, library: EmbyItem): Promise<EmbyItem[]> {
     try {
-      return await client.getLibraryItems(library.id, 12, library.collectionType)
+      return await provider.getLibraryItemsRaw(library.id, 12, library.collectionType)
     } catch {
       return []
     }
@@ -1149,12 +1207,13 @@ struct EmbyLibraryPage {
   }
 
   private itemImageUrl(item: EmbyItem, maxWidth: number = 500): string {
-    return this.config === null ? '' : new EmbyClient(this.config!).imageUrl(item, maxWidth)
+    return this.provider === null ? '' : this.provider.imageUrlFor(item, maxWidth)
   }
 
   private async openItem(item: EmbyItem, libraryRoot: boolean = false): Promise<void> {
     if (item.isFolder) {
       const params: Record<string, Object> = {
+        'sourceId': this.sourceId,
         'parentId': item.id,
         'title': item.name
       }
@@ -1171,19 +1230,8 @@ struct EmbyLibraryPage {
     if (this.config === null || this.playingItemId.length > 0) return
     this.playingItemId = item.id
     try {
-      const route: EmbyPlaybackRoute = await new EmbyClient(this.config!).getPlaybackRoute(item)
-      this.getUIContext().getRouter().pushUrl({
-        url: 'pages/player/LocalPlayerPage',
-        params: {
-          'videoUri': route.url,
-          'videoFileName': item.name,
-          'isLocalFile': false,
-          'sourceType': 'emby',
-          'embyPlaybackJson': route.context.encode(),
-          'historyPositionMs': item.resumePositionMs(),
-          'historyDurationMs': item.durationMs()
-        }
-      })
+      if (this.sourceId.length === 0) throw new Error('Emby 媒体源未配置')
+      await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, item, this.getPlaybackQueue(item))
     } catch (err) {
       promptAction.showToast({ message: err instanceof Error ? err.message : '无法播放该 Emby 条目' })
     } finally {
@@ -1192,7 +1240,19 @@ struct EmbyLibraryPage {
   }
 
   private openSettings(): void {
-    this.getUIContext().getRouter().pushUrl({ url: 'pages/settings/EmbySettingsPage' })
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/sources/SourceManagerPage' })
+  }
+
+  /** 保持连续播放在当前浏览或首页分区内，避免跨库、跨分区自动跳转。 */
+  private getPlaybackQueue(item: EmbyItem): EmbyItem[] {
+    const sources: EmbyItem[][] = [this.items, this.resumeItems, this.latestItems]
+    for (let i = 0; i < this.homeSections.length; i++) sources.push(this.homeSections[i].items)
+    for (let i = 0; i < sources.length; i++) {
+      for (let j = 0; j < sources[i].length; j++) {
+        if (sources[i][j].id === item.id) return sources[i]
+      }
+    }
+    return [item]
   }
 
   private openSection(sectionId: string, sectionTitle: string, collectionType: string = ''): void {
@@ -1206,11 +1266,12 @@ struct EmbyLibraryPage {
       if (this.latestOnly) return
       this.getUIContext().getRouter().pushUrl({
         url: 'pages/emby/EmbyLibraryPage',
-        params: { 'view': 'latest', 'title': sectionTitle }
+        params: { 'sourceId': this.sourceId, 'view': 'latest', 'title': sectionTitle }
       })
       return
     }
     const params: Record<string, Object> = {
+      'sourceId': this.sourceId,
       'parentId': sectionId,
       'title': sectionTitle,
       'libraryRoot': true,

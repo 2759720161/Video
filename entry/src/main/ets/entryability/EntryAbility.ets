@@ -1,7 +1,11 @@
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit'
+import { AbilityConstant, common, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit'
 import { preferences } from '@kit.ArkData'
 import { display, window } from '@kit.ArkUI'
 import { PreferencesStore } from '../store/PreferencesStore'
+import { PLAYBACK_HISTORY_VERSION_KEY } from '../store/PlaybackHistoryChangeSignal'
+import { MediaSourceMigration } from '../store/MediaSourceMigration'
+import { ProviderRegistry } from '../providers/base/ProviderRegistry'
+import { LocalProvider } from '../providers/local/LocalProvider'
 import { RdbManager } from '../store/RdbManager'
 import { FileStore } from '../store/FileStore'
 import { UserDownloadFolder } from '../services/UserDownloadFolder'
@@ -42,6 +46,7 @@ import {
   PREFS_KEY_BOTTOM_TAB_SHOW_ANIMATION
 } from '../utils/BottomTabAutoHide'
 import { Logger } from '../utils/Logger'
+import { SystemMediaSession } from '../services/SystemMediaSession'
 import {
   HIDE_MEDIA_CARDS_DEFAULT,
   PREFS_KEY_HIDE_CONTINUE_WATCHING,
@@ -52,6 +57,8 @@ const logger = new Logger('EntryAbility')
 
 export default class EntryAbility extends UIAbility {
   private density: number = 3
+  private storesReady: Promise<void> = Promise.resolve()
+  private systemMediaSession: SystemMediaSession = SystemMediaSession.getInstance()
 
   onCreate(_want: Want, _launchParam: AbilityConstant.LaunchParam): void {
     AppStorage.setOrCreate('currentTab', 0)
@@ -63,6 +70,7 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('playerFullScreen', false)
     AppStorage.setOrCreate('playerPageActive', false)
     AppStorage.setOrCreate('appRdbReady', false)
+    AppStorage.setOrCreate(PLAYBACK_HISTORY_VERSION_KEY, 0)
     AppStorage.setOrCreate('bottomTabAutoHide', BOTTOM_TAB_AUTO_HIDE_DEFAULT)
     AppStorage.setOrCreate('bottomTabShowAnimation', BOTTOM_TAB_SHOW_ANIMATION_DEFAULT)
     AppStorage.setOrCreate('bottomTabOffset', 0)
@@ -84,6 +92,7 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_OUTLINE_ENABLED, SUBTITLE_OUTLINE_ENABLED_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_TIME_OFFSET_MS, SUBTITLE_TIME_OFFSET_MS_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_HDS_MATERIAL_LEVEL, HDS_MATERIAL_LEVEL_DEFAULT)
+    this.systemMediaSession.initialize(this.context as common.UIAbilityContext)
 
     // The home library can start scanning as soon as the first page is shown.
     // Initialize its thumbnail cache before any asynchronous store setup.
@@ -98,7 +107,7 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       logger.warn('Set initial color mode failed: %{public}s', String(err))
     }
-    this.initStores()
+    this.storesReady = this.initStores()
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
@@ -116,17 +125,31 @@ export default class EntryAbility extends UIAbility {
       }
     })
     mainWindow.on('windowSizeChange', () => this.updateMetrics(mainWindow))
-    windowStage.loadContent('pages/Index', (err) => {
-      if (err.code) logger.error('Load main page failed: %{public}s', err.message)
+    this.storesReady.then(() => {
+      windowStage.loadContent('pages/Index', (err) => {
+        if (err.code) logger.error('Load main page failed: %{public}s', err.message)
+      })
+    }).catch((err: Error) => {
+      logger.error('Wait for app initialization failed: %{public}s', err.message)
+      windowStage.loadContent('pages/Index', (loadErr) => {
+        if (loadErr.code) logger.error('Load main page failed: %{public}s', loadErr.message)
+      })
     })
   }
 
   onForeground(): void {
     AppStorage.setOrCreate('appInForeground', true)
+    // 初次启动时系统媒体会话可能受 Ability 生命周期时序影响；回到前台时
+    // 通过幂等初始化补偿一次，确保后台播控最终能够恢复。
+    this.systemMediaSession.initialize(this.context as common.UIAbilityContext)
   }
 
   onBackground(): void {
     AppStorage.setOrCreate('appInForeground', false)
+  }
+
+  onDestroy(): void {
+    void this.systemMediaSession.destroy()
   }
 
   private updateMetrics(mainWindow: window.Window): void {
@@ -144,9 +167,16 @@ export default class EntryAbility extends UIAbility {
   }
 
   private async initStores(): Promise<void> {
+    // Provider 工厂不依赖 Preferences；先注册可保证存储异常时 local 来源仍可用。
+    ProviderRegistry.registerBuiltIns()
     try {
       const prefs = await preferences.getPreferences(this.context, 'local_video_settings')
       PreferencesStore.getInstance().init(prefs)
+      try {
+        await MediaSourceMigration.runIfNeeded()
+      } catch (err) {
+        logger.error('Migrate media sources failed: %{public}s', String(err))
+      }
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_AUTO_PIP, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_PLAYER_AUTO_PIP, PLAYER_AUTO_PIP_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_AUTO_NEXT, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_PLAYER_AUTO_NEXT, PLAYER_AUTO_NEXT_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_DEFAULT_SPEED, await PreferencesStore.getInstance().getNumber(PREFS_KEY_PLAYER_DEFAULT_SPEED, PLAYER_DEFAULT_SPEED))

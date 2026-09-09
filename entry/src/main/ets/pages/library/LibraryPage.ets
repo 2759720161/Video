@@ -8,8 +8,10 @@ import {
 import { LocalFilePicker } from '../../services/LocalFilePicker'
 import { LocalVideoThumbnailStore } from '../../services/LocalVideoThumbnailStore'
 import { LocalVideoRecord } from '../../models/LocalVideoRecord'
-import { PlaybackQueueCodec } from '../../models/PlaybackQueueItem'
+import { LocalPlaybackLauncher } from '../../services/LocalPlaybackLauncher'
 import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
+import { PlaybackHistoryStore } from '../../store/PlaybackHistoryStore'
+import { PlaybackHistoryRecord } from '../../models/PlaybackHistoryRecord'
 import { LOCAL_VIDEO_HISTORY_VERSION_KEY } from '../../store/LocalVideoHistoryChangeSignal'
 import { LOCAL_MEDIA_LIBRARY_VERSION_KEY } from '../../store/LocalMediaLibraryChangeSignal'
 import { UserDownloadFolder, UserFolderEntry } from '../../services/UserDownloadFolder'
@@ -30,15 +32,19 @@ import {
 } from '../../utils/BottomTabAutoHide'
 import { HIDE_MEDIA_CARDS_DEFAULT, PREFS_KEY_HIDE_CONTINUE_WATCHING, PREFS_KEY_HIDE_LOCAL_MEDIA } from '../../utils/MediaVisibilityPreferences'
 import { PreferencesStore } from '../../store/PreferencesStore'
-import { EMBY_SOURCE_VERSION_KEY, EmbyServerStore } from '../../store/EmbyServerStore'
-import { EmbyServerConfig } from '../../models/EmbyModels'
+import { MediaSourceStore, MEDIA_SOURCE_VERSION_KEY } from '../../store/MediaSourceStore'
+import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
+import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
+import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
 
-const logger = new Logger('LocalPage')
+const logger = new Logger('LibraryPage')
 const HOME_HISTORY_LIMIT = 6
 
+@Entry
 @Component
-export struct LocalPage {
-  @Prop @Watch('onActiveChanged') isActive: boolean = false
+export struct LibraryPage {
+  // 独立路由实例默认可用；首页嵌入时由 Index 显式传入当前 Tab 状态。
+  @Prop @Watch('onActiveChanged') isActive: boolean = true
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
@@ -50,8 +56,10 @@ export struct LocalPage {
   @StorageLink('bottomTabOffset') bottomTabOffset: number = 0
   @StorageLink(PREFS_KEY_HIDE_LOCAL_MEDIA) hideLocalMedia: boolean = HIDE_MEDIA_CARDS_DEFAULT
   @StorageLink(PREFS_KEY_HIDE_CONTINUE_WATCHING) hideContinueWatching: boolean = HIDE_MEDIA_CARDS_DEFAULT
-  @StorageLink(EMBY_SOURCE_VERSION_KEY) @Watch('onEmbySourceChanged') embySourceVersion: number = 0
+  @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onMediaSourceChanged') mediaSourceVersion: number = 0
+  @StorageLink(PLAYBACK_HISTORY_VERSION_KEY) @Watch('onPlaybackHistoryChanged') playbackHistoryVersion: number = 0
   @State localHistory: LocalVideoRecord[] = []
+  @State continueWatching: LocalVideoRecord[] = []
   @State ownFolderVideoCount: number = 0
   @State ownFolderCount: number = 0
   @State rootFolderEntries: UserFolderEntry[] = []
@@ -59,9 +67,11 @@ export struct LocalPage {
   @State ownFolderScanned: boolean = false
   @State ownFolderScanning: boolean = false
   @State ownFolderScanFailed: boolean = false
-  @State private embyConfig: EmbyServerConfig | null = null
+  @State private mediaSources: MediaSourceInstance[] = []
   private scroller: Scroller = new Scroller()
   private historyStore: LocalVideoHistoryStore = new LocalVideoHistoryStore()
+  private unifiedHistoryStore: PlaybackHistoryStore = new PlaybackHistoryStore()
+  private reloadGeneration: number = 0
   private hasScannedOwnFolder: boolean = false
   private isGeneratingCovers: boolean = false
   private pendingHistoryCoverGeneration: boolean = false
@@ -88,13 +98,13 @@ export struct LocalPage {
 
   onRdbReadyChanged(): void {
     if (this.appRdbReady && this.isActive) {
-      this.loadLocalHistory()
+      void this.reloadPageData()
     }
   }
 
   onLocalHistoryVersionChanged(): void {
     if (this.appRdbReady && this.isActive) {
-      this.loadLocalHistory()
+      void this.reloadPageData()
     }
   }
 
@@ -104,10 +114,12 @@ export struct LocalPage {
     }
   }
 
-  onEmbySourceChanged(): void {
-    if (this.isActive) {
-      this.loadEmbyConfig()
-    }
+  onMediaSourceChanged(): void {
+    if (this.isActive) void this.reloadPageData()
+  }
+
+  onPlaybackHistoryChanged(): void {
+    if (this.appRdbReady && this.isActive) void this.reloadPageData()
   }
 
   onActiveChanged(): void {
@@ -179,10 +191,10 @@ export struct LocalPage {
   @Builder
   private MediaLibraryContent(): void {
     Column({ space: 0 }) {
-      this.EmbyMediaSection()
+      this.MediaSourcesSection()
       this.LocalMediaSection()
 
-      if (this.localHistory.length > 0 || this.hideContinueWatching) {
+      if (this.continueWatching.length > 0 || this.hideContinueWatching) {
         this.ContinueWatchingSection()
       } else {
         this.HomeEmptyState()
@@ -192,65 +204,44 @@ export struct LocalPage {
   }
 
   @Builder
-  private EmbyMediaSection(): void {
-    Column({ space: 12 }) {
-      Row() {
-        Text('Emby')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-        Text(this.embyConfig === null ? '未连接' : this.embyConfig!.serverName)
-          .fontSize(13)
-          .fontColor(this.embyConfig === null ? $r('app.color.text_secondary') : $r('app.color.status_success'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ right: 8 })
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(22)
-          .fontColor([$r('app.color.text_secondary')])
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+  private MediaSourcesSection(): void {
+    Column({ space: 10 }) {
+      Text('媒体来源').fontSize(20).fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary')).width('100%').margin({ top: 24 })
+      ForEach(this.mediaSources, (source: MediaSourceInstance) => {
+        Row({ space: 12 }) {
+          SymbolGlyph(source.providerType === 'local' ? $r('sys.symbol.folder') :
+            $r('sys.symbol.play_round_rectangle')).fontSize(27).fontColor([$r('app.color.accent_blue')])
+          Column({ space: 3 }) {
+            Text(source.name).fontSize(16).fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text(this.sourceStatus(source)).fontSize(12).fontColor($r('app.color.text_secondary'))
+          }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+          SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(18).fontColor([$r('app.color.text_secondary')])
+        }.width('100%').padding(14).borderRadius(14)
+          .backgroundColor($r('app.color.card_background'))
+          .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+          .enabled(source.enabled || source.providerType === 'local')
+          .opacity(source.enabled || source.providerType === 'local' ? 1 : 0.55)
+          .onClick(() => this.openSource(source))
+      })
+    }.width('100%')
+  }
 
-      Row({ space: 14 }) {
-        Stack({ alignContent: Alignment.Center }) {
-          Circle()
-            .width(52)
-            .height(52)
-            .fill($r('app.color.accent_blue'))
-            .opacity(0.12)
-          SymbolGlyph($r('sys.symbol.play_round_rectangle_fill'))
-            .fontSize(28)
-            .fontColor([$r('app.color.accent_blue')])
-        }
-        .width(56)
-        .height(56)
+  private sourceStatus(source: MediaSourceInstance): string {
+    if (source.providerType === 'local') return '本机文件夹 · 已启用'
+    return (source.providerType === 'webdav' ? 'WebDAV' : source.providerType) +
+      (source.enabled ? ' · 已启用' : ' · 已停用')
+  }
 
-        Column({ space: 4 }) {
-          Text(this.embyConfig === null ? '连接 Emby 服务器' : '浏览远程媒体库')
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-          Text(this.embyConfig === null ? '登录后可浏览海报、继续播放并同步进度' :
-            this.embyConfig!.userName + ' · ' + this.embyConfig!.baseUrl)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-      .padding(14)
-      .borderRadius(14)
-      .backgroundColor($r('app.color.card_background'))
-      .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+  private openSource(source: MediaSourceInstance): void {
+    if (source.providerType === 'local') {
+      void this.openFolderPage()
+    } else if (source.providerType === 'emby') {
+      void router.pushUrl({ url: 'pages/emby/EmbyLibraryPage', params: { sourceId: source.id } })
+    } else {
+      void router.pushUrl({ url: 'pages/sources/SourceBrowserPage', params: { sourceId: source.id, parentId: '' } })
     }
-    .width('100%')
-    .margin({ top: 24, bottom: 4 })
-    .onClick(() => this.openEmby())
   }
 
   @Builder
@@ -349,7 +340,7 @@ export struct LocalPage {
         .width(176)
     }
     .width(176)
-    .onClick(() => this.openHistoryRecord(record, this.localHistory))
+    .onClick(() => this.openHistoryRecord(record))
   }
 
   @Builder
@@ -433,7 +424,7 @@ export struct LocalPage {
 
     }
     .width('100%')
-    .margin({ top: this.localHistory.length > 0 ? 28 : 24, bottom: 24 })
+    .margin({ top: this.continueWatching.length > 0 ? 28 : 24, bottom: 24 })
   }
 
   @Builder
@@ -504,23 +495,19 @@ export struct LocalPage {
     if (!this.isActive) {
       return
     }
+    const generation = ++this.reloadGeneration
     if (this.appRdbReady) {
-      await this.loadLocalHistory()
+      await this.loadLocalHistory(generation)
     }
-    await this.loadEmbyConfig()
-    if (this.isActive) {
+    if (generation !== this.reloadGeneration || !this.isActive) return
+    this.mediaSources = await MediaSourceStore.getAll()
+    if (generation !== this.reloadGeneration || !this.isActive) return
+    if (this.appRdbReady) {
+      await this.loadContinueWatchingHistory(generation)
+    }
+    if (generation === this.reloadGeneration && this.isActive) {
       this.scanOwnFolderIfNeeded(true)
     }
-  }
-
-  private async loadEmbyConfig(): Promise<void> {
-    this.embyConfig = await EmbyServerStore.load()
-  }
-
-  private openEmby(): void {
-    router.pushUrl({
-      url: this.embyConfig === null ? 'pages/settings/EmbySettingsPage' : 'pages/emby/EmbyLibraryPage'
-    })
   }
 
   @Builder
@@ -550,15 +537,54 @@ export struct LocalPage {
     await PreferencesStore.getInstance().setBoolean(PREFS_KEY_HIDE_CONTINUE_WATCHING, next)
   }
 
-  private async loadLocalHistory(): Promise<void> {
+  private async loadLocalHistory(generation: number = this.reloadGeneration): Promise<void> {
     try {
-      this.localHistory = await this.historyStore.getAll()
+      const records = await this.historyStore.getAll()
+      if (generation !== this.reloadGeneration) return
+      this.localHistory = records
       this.bindRootEntryHistory()
       this.ensureHistoryExitCovers()
     } catch (err) {
+      if (generation !== this.reloadGeneration) return
       logger.warn('加载本地播放记录失败: %{public}s', err instanceof Error ? err.message : String(err))
       this.localHistory = []
     }
+  }
+
+  private async loadContinueWatchingHistory(generation: number = this.reloadGeneration): Promise<void> {
+    try {
+      const merged: LocalVideoRecord[] = [...this.localHistory]
+      const enabledSources: Record<string, boolean> = {}
+      for (let i = 0; i < this.mediaSources.length; i++) {
+        enabledSources[this.mediaSources[i].id] = this.mediaSources[i].enabled
+      }
+      const unified = await this.unifiedHistoryStore.getAll()
+      for (let i = 0; i < unified.length; i++) {
+        const record = unified[i]
+        if (record.sourceId === 'local' || enabledSources[record.sourceId] !== true) continue
+        merged.push(this.toDisplayRecord(record))
+      }
+      merged.sort((left: LocalVideoRecord, right: LocalVideoRecord) => right.lastPlayedAt - left.lastPlayedAt)
+      if (generation !== this.reloadGeneration) return
+      this.continueWatching = merged
+    } catch (err) {
+      if (generation !== this.reloadGeneration) return
+      logger.warn('加载统一继续观看记录失败: %{public}s', err instanceof Error ? err.message : String(err))
+      this.continueWatching = [...this.localHistory]
+    }
+  }
+
+  private toDisplayRecord(record: PlaybackHistoryRecord): LocalVideoRecord {
+    const display = new LocalVideoRecord()
+    display.id = -record.id - 2
+    display.sourceId = record.sourceId
+    display.fileKey = record.mediaId
+    display.fileName = record.title.length > 0 ? record.title : record.mediaId
+    display.coverUri = record.artwork
+    display.positionMs = record.positionMs
+    display.durationMs = record.durationMs
+    display.lastPlayedAt = record.lastPlayedAt
+    return display
   }
 
   private async scanOwnFolderIfNeeded(force: boolean = false): Promise<void> {
@@ -871,43 +897,23 @@ export struct LocalPage {
     router.pushUrl({ url: 'pages/local/ContinueWatchingPage' })
   }
 
-  private async openHistoryRecord(record: LocalVideoRecord, queue: LocalVideoRecord[]): Promise<void> {
-    if (!await LocalFilePicker.ensureReadableUri(record.fileUri)) {
+  private async openHistoryRecord(record: LocalVideoRecord, queue: LocalVideoRecord[] = this.localHistory): Promise<void> {
+    if (record.sourceId !== 'local') {
       try {
-        const context = getContext(this) as common.UIAbilityContext
-        if (!await LocalFilePicker.authorizeExistingUri(context, record.fileUri)) {
-          return
-        }
+        await ProviderPlaybackLauncher.openById(this.getUIContext(), record.sourceId, record.fileKey,
+          record.positionMs)
       } catch (err) {
-        logger.warn('历史视频授权失败: %{public}s', err instanceof Error ? err.message : String(err))
-        return
+        logger.warn('打开远程继续观看记录失败: %{public}s', err instanceof Error ? err.message : String(err))
       }
+      return
     }
-    let queueIndex = 0
-    for (let i = 0; i < queue.length; i++) {
-      if (queue[i].fileUri === record.fileUri && queue[i].fileSize === record.fileSize) {
-        queueIndex = i
-        break
-      }
-    }
-    router.pushUrl({
-      url: 'pages/player/LocalPlayerPage',
-      params: {
-        videoUri: record.fileUri,
-        videoFileName: record.fileName,
-        videoFileSize: record.fileSize,
-        historyPositionMs: record.positionMs,
-        historyDurationMs: record.durationMs,
-        playlistJson: PlaybackQueueCodec.encode(queue),
-        queueIndex: queueIndex
-      }
-    })
+    await LocalPlaybackLauncher.open(this.getUIContext(), record, queue)
   }
 
   private getHomeHistory(): LocalVideoRecord[] {
     const result: LocalVideoRecord[] = []
-    for (let i = 0; i < this.localHistory.length && result.length < HOME_HISTORY_LIMIT; i++) {
-      result.push(this.localHistory[i])
+    for (let i = 0; i < this.continueWatching.length && result.length < HOME_HISTORY_LIMIT; i++) {
+      result.push(this.continueWatching[i])
     }
     return result
   }

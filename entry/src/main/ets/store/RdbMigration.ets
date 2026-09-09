@@ -213,6 +213,16 @@ export class RdbMigration {
           'TEXT NOT NULL DEFAULT \'\'');
         logger.info('Migration v12: added persisted external subtitle binding');
       }
+    },
+    {
+      version: 13,
+      migrate: async (rdbManager: RdbManager): Promise<void> => {
+        await rdbManager.executeSql(RdbSchema.getCreatePlaybackHistoryTable());
+        await rdbManager.executeSql(
+          `CREATE INDEX IF NOT EXISTS idx_playback_history_last_played_at ON ${RdbConstants.TABLE_PLAYBACK_HISTORY}(${RdbConstants.COL_LAST_PLAYED_AT})`
+        );
+        logger.info('Migration v13: created playback_history table');
+      }
     }
   ];
 

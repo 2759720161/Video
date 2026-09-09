@@ -21,7 +21,6 @@ export class HlsSegmentMetadata {
 }
 
 export class StreamMetadata {
-  sourceType: string = ''
   isHls: boolean = false
   isMasterPlaylist: boolean = false
   variants: VariantStreamMetadata[] = []

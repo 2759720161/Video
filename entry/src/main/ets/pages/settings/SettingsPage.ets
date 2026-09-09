@@ -76,7 +76,7 @@ export struct SettingsPage {
 
       this.SectionHeader('媒体源')
       Column() {
-        this.RouteItem($r('sys.symbol.play_round_rectangle'), 'Emby', 'pages/settings/EmbySettingsPage')
+        this.RouteItem($r('sys.symbol.play_round_rectangle'), '媒体源', 'pages/sources/SourceManagerPage')
       }
       .width('100%').borderRadius(12).clip(true)
       .backgroundColor($r('app.color.card_background'))

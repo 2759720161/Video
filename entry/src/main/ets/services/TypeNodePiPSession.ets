@@ -4,22 +4,21 @@ import { common } from '@kit.AbilityKit'
 import { IPlayerEngine, PlaybackOptions, PlayerState } from '../core/player/IPlayerEngine'
 import { PlayerEngineFactory } from '../core/player/PlayerEngineFactory'
 import { AVPlayerEngine } from '../core/player/AVPlayerEngine'
-import { PlaybackRoad } from '../models/PlaybackRoad'
+import { PlaybackSession } from '../core/playback/PlaybackSession'
+import { PlaybackQueueItem } from '../core/playback/PlaybackQueueItem'
+import { PlaybackOptionsAdapter } from '../core/playback/PlaybackOptionsAdapter'
+import { PlaybackPosition } from '../core/playback/PlaybackPosition'
+import { PlaybackSessionManager } from './PlaybackSessionManager'
+import { PIP_PLAYBACK_OWNER_ID } from '../core/playback/PlaybackOwnerIds'
 import { Logger } from '../utils/Logger'
-import { PlaybackSessionActions, PlaybackSessionStore } from './PlaybackSessionStore'
+import { NowPlayingActions, NowPlayingStore } from './NowPlayingStore'
 
 const logger = new Logger('TypeNodePiPSession')
+const PIP_OWNER_ID: string = PIP_PLAYBACK_OWNER_ID
 
 export class TypeNodePiPRoute {
   url: string = ''
   params: Record<string, Object> = {}
-}
-
-class PiPEpisodeTarget {
-  roadIndex: number = -1
-  episodeIndex: number = -1
-  name: string = ''
-  url: string = ''
 }
 
 class PiPXComponentController extends XComponentController {
@@ -51,7 +50,11 @@ export class TypeNodePiPSession {
   private isCreating: boolean = false
   private isActive: boolean = false
   private isRestoring: boolean = false
-  private playbackStore: PlaybackSessionStore = PlaybackSessionStore.getInstance()
+  private queueSwitchToken: number = 0
+  private completed: boolean = false
+  private ownsSession: boolean = false
+  private sessionManager: PlaybackSessionManager = PlaybackSessionManager.getInstance()
+  private nowPlayingStore: NowPlayingStore = NowPlayingStore.getInstance()
 
   static getInstance(): TypeNodePiPSession {
     if (TypeNodePiPSession.instance === null) {
@@ -72,20 +75,27 @@ export class TypeNodePiPSession {
   async start(context: common.UIAbilityContext, uiContext: UIContext, options: PlaybackOptions,
     route: TypeNodePiPRoute, contentWidth: number, contentHeight: number,
     defaultWindowSizeType: number, initialPlaying: boolean = true): Promise<boolean> {
+    const normalizedRoute = this.normalizeRoute(route)
+    if (normalizedRoute === null) {
+      logger.warn('拒绝启动缺少 sessionId 的 PiP 路由')
+      return false
+    }
     if (this.isActive || this.isCreating) {
-      return true
+      return this.route.params['sessionId'] === normalizedRoute.params['sessionId']
     }
     if (!PiPWindow.isPiPEnabled()) {
       return false
     }
 
     this.isCreating = true
+    this.completed = false
+    this.ownsSession = false
     this.isRestoring = false
-    this.route = route
+    this.route = normalizedRoute
     this.uiContext = uiContext
     this.playbackOptions = this.clonePlaybackOptions(options)
     this.lastState = new PlayerState()
-    this.initialPositionMs = options.startPositionMs > 0 ? options.startPositionMs : 0
+    this.initialPositionMs = this.normalizePosition(options.startPositionMs)
     this.lastState.positionMs = this.initialPositionMs
     this.syntheticPositionMs = this.initialPositionMs
     this.lastClockMs = Date.now()
@@ -94,7 +104,7 @@ export class TypeNodePiPSession {
     this.surfaceId = ''
     this.registerPlaybackStoreActions()
     this.syncPlaybackStoreMedia()
-    this.playbackStore.updatePlayback(this.initialPositionMs, initialPlaying, 'typenode-pip')
+    this.nowPlayingStore.updatePlayback(this.initialPositionMs, initialPlaying, PIP_OWNER_ID)
 
     try {
       this.xComponent = typeNode.createNode(uiContext, 'XComponent', {
@@ -121,12 +131,13 @@ export class TypeNodePiPSession {
       this.updateEpisodeControlStatus()
       this.isCreating = false
       this.isActive = true
+      this.ownsSession = true
       logger.info('TypeNode PiP started')
       return true
     } catch (err) {
       const businessError = err as BusinessError
       logger.warn('TypeNode PiP start failed: %{public}d - %{public}s', businessError.code, businessError.message)
-      this.release(true)
+      this.release(true, false)
       return false
     }
   }
@@ -143,19 +154,58 @@ export class TypeNodePiPSession {
     if (this.playerEngine !== null || this.playbackOptions === null || this.surfaceId.length === 0) {
       return
     }
-    if (this.playbackOptions.isLocalFile) {
+    const options = this.playbackOptions
+    let engine: IPlayerEngine
+    if (options.isLocalFile) {
       logger.info('TypeNode PiP uses AVPlayer for local file')
-      this.playerEngine = new AVPlayerEngine()
+      engine = new AVPlayerEngine()
     } else {
-      this.playerEngine = await PlayerEngineFactory.create()
+      engine = await PlayerEngineFactory.create()
     }
+    if (this.playbackOptions !== options || !this.isRunning()) {
+      engine.release()
+      return
+    }
+    this.playerEngine = engine
     this.playerEngine.setSurfaceId(this.surfaceId)
     this.playerEngine.onStateChange((state: PlayerState) => {
+      if (this.isRestoring || this.playerEngine !== engine) return
       this.syncPlaybackClock()
       this.lastState = state
-      this.playbackStore.updatePlayerState(state, 'typenode-pip')
-      if (state.positionMs > 0) {
-        this.syntheticPositionMs = Math.max(this.syntheticPositionMs, state.positionMs)
+      this.nowPlayingStore.updatePlayerState(state, PIP_OWNER_ID)
+      const session = this.getSession()
+      if (session !== null && !this.isRestoring) {
+        const normalizedStateDurationMs = PlaybackQueueItem.normalizeDurationMs(state.durationMs)
+        if (normalizedStateDurationMs > 0) session.durationMs = normalizedStateDurationMs
+        const normalizedStatePositionMs = this.normalizePosition(state.positionMs, session.durationMs)
+        const transientState = state.stateName === 'creating' || state.stateName === 'initialized' ||
+          state.stateName === 'preparing' || state.stateName === 'prepared'
+        // During a new file's prepare phase some engines briefly report zero
+        // before applying the requested resume position. Preserve the session
+        // start point until a meaningful position or a steady state arrives.
+        if (!transientState || normalizedStatePositionMs > 0) {
+          session.startPositionMs = normalizedStatePositionMs
+          if (session.queueIndex >= 0 && session.queueIndex < session.queue.length) {
+            session.queue[session.queueIndex].positionMs = normalizedStatePositionMs
+            if (session.durationMs > 0) {
+              session.queue[session.queueIndex].durationMs = session.durationMs
+            }
+          }
+        }
+        this.sessionManager.update(session)
+        const controller = this.sessionManager.getReportController(session.id)
+        if (controller !== null && state.error.length === 0 && !state.completed && !this.completed) {
+          controller.update(state.positionMs, state.durationMs, state.playing, state.speed,
+            state.stateName === 'prepared' || state.stateName === 'playing' || state.playing)
+        }
+        if (state.completed && !this.completed) {
+          this.completed = true
+          if (controller !== null) void controller.stop(state.positionMs, state.durationMs, state.speed)
+        }
+      }
+      if (Number.isFinite(state.positionMs) && state.positionMs > 0) {
+        this.syntheticPositionMs = Math.max(this.syntheticPositionMs,
+          this.normalizePosition(state.positionMs, state.durationMs))
       }
       if (state.completed || state.stateName === 'completed' || state.stateName === 'stopped' ||
         state.stateName === 'error') {
@@ -229,14 +279,14 @@ export class TypeNodePiPSession {
         if (control.status === PiPWindow.PiPControlStatus.PLAY) {
           this.desiredPlaying = true
           this.syncPlaybackClock(true)
-          this.playbackStore.updatePlayback(this.getCurrentPositionMs(), true, 'typenode-pip')
+          this.nowPlayingStore.updatePlayback(this.getCurrentPositionMs(), true, PIP_OWNER_ID)
           if (this.playerEngine !== null) {
             this.playerEngine.play()
           }
         } else {
           this.desiredPlaying = false
           this.syncPlaybackClock(false)
-          this.playbackStore.updatePlayback(this.getCurrentPositionMs(), false, 'typenode-pip')
+          this.nowPlayingStore.updatePlayback(this.getCurrentPositionMs(), false, PIP_OWNER_ID)
           if (this.playerEngine !== null) {
             this.playerEngine.pause()
           }
@@ -278,106 +328,101 @@ export class TypeNodePiPSession {
     }
     try {
       this.pipController.setPiPControlEnabled(
-        PiPWindow.PiPControlType.VIDEO_PREVIOUS, this.findAdjacentEpisode(-1) !== null)
+        PiPWindow.PiPControlType.VIDEO_PREVIOUS, this.hasAdjacentItem(-1))
       this.pipController.setPiPControlEnabled(
-        PiPWindow.PiPControlType.VIDEO_NEXT, this.findAdjacentEpisode(1) !== null)
+        PiPWindow.PiPControlType.VIDEO_NEXT, this.hasAdjacentItem(1))
     } catch (_err) {
       logger.warn('Update TypeNode PiP episode controls failed')
     }
   }
 
-  private parseRoads(): PlaybackRoad[] {
-    const raw = this.route.params['roadsJson']
-    if (raw === undefined) {
-      return []
-    }
-    try {
-      return JSON.parse(raw as string) as PlaybackRoad[]
-    } catch (_err) {
-      return []
-    }
+  private getSession(): PlaybackSession | null {
+    const id = this.route.params['sessionId']
+    return typeof id === 'string' ? this.sessionManager.get(id) : null
   }
 
-  private findAdjacentEpisode(direction: number): PiPEpisodeTarget | null {
-    const roads = this.parseRoads()
-    const selectedRoadIndex = this.route.params['selectedRoadIndex'] as number
-    const currentEpisodeIndex = this.route.params['currentEpisodeIndex'] as number
-    if (selectedRoadIndex < 0 || selectedRoadIndex >= roads.length || direction === 0) {
-      return null
-    }
+  /** PiP 只接收启动会话键；复制参数避免调用方后续修改原对象。 */
+  private normalizeRoute(route: TypeNodePiPRoute): TypeNodePiPRoute | null {
+    const rawSessionId = route.params['sessionId']
+    if (typeof rawSessionId !== 'string' || rawSessionId.trim().length === 0) return null
+    const normalized = new TypeNodePiPRoute()
+    normalized.url = route.url
+    // PiP only carries the process-local session key. Copying legacy route
+    // payloads here would let URI/source-specific parameters leak back into
+    // the unified PlayerPage route.
+    normalized.params['sessionId'] = rawSessionId.trim()
+    return normalized
+  }
 
-    if (direction > 0) {
-      const currentRoad = roads[selectedRoadIndex]
-      if (currentEpisodeIndex >= 0 && currentEpisodeIndex < currentRoad.episodes.length - 1) {
-        return this.buildEpisodeTarget(selectedRoadIndex, currentEpisodeIndex + 1, roads)
+  private hasAdjacentItem(direction: number): boolean {
+    const session = this.getSession()
+    if (session === null || this.sessionManager.getResolver(session.id) === null) return false
+    const index = session.queueIndex + direction
+    return session.queueIndex >= 0 && index >= 0 && index < session.queue.length
+  }
+
+  private async switchEpisode(direction: number): Promise<void> {
+    const session = this.getSession()
+    if (this.isRestoring || session === null || !this.hasAdjacentItem(direction)) return
+    const resolver = this.sessionManager.getResolver(session.id)
+    if (resolver === null) return
+    const token = ++this.queueSwitchToken
+    const index = session.queueIndex + direction
+    try {
+      const selected = session.queue[index]
+      const next = await resolver.resolve(selected)
+      const hasValidStructure = next !== null && typeof next === 'object' &&
+        next.media !== null && typeof next.media === 'object' && !Array.isArray(next.media) &&
+        next.stream !== null && typeof next.stream === 'object' && !Array.isArray(next.stream)
+      const nextSourceId = hasValidStructure ? TypeNodePiPSession.normalizeText(next.media.sourceId) : ''
+      const nextMediaId = hasValidStructure ? TypeNodePiPSession.normalizeText(next.media.mediaId) : ''
+      const selectedSourceId = selected !== null && typeof selected === 'object' ?
+        TypeNodePiPSession.normalizeText(selected.sourceId) : ''
+      const selectedMediaId = selected !== null && typeof selected === 'object' ?
+        TypeNodePiPSession.normalizeText(selected.mediaId) : ''
+      if (!hasValidStructure || nextSourceId !== selectedSourceId || nextMediaId !== selectedMediaId) {
+        throw new Error('Provider 返回的播放会话身份不匹配')
       }
-      for (let i = selectedRoadIndex + 1; i < roads.length; i++) {
-        if (roads[i].episodes.length > 0) {
-          return this.buildEpisodeTarget(i, 0, roads)
+      if (token !== this.queueSwitchToken || this.getSession() !== session || !this.isRunning() || this.isRestoring) return
+      this.refreshEngineState()
+      session.queue[session.queueIndex].positionMs = PlaybackQueueItem.normalizePositionMs(this.getCurrentPositionMs())
+      session.queue[session.queueIndex].durationMs = PlaybackQueueItem.normalizeDurationMs(session.durationMs)
+      const reporter = this.sessionManager.getReportController(session.id)
+      if (reporter !== null) await reporter.stop(this.getCurrentPositionMs(), session.durationMs, this.lastState.speed)
+      if (token !== this.queueSwitchToken || this.getSession() !== session || !this.isRunning() || this.isRestoring) return
+      next.id = session.id
+      next.queue = session.queue
+      next.queueIndex = index
+      next.startPositionMs = PlaybackPosition.normalizeResume(next.startPositionMs, next.durationMs)
+      if (index >= 0 && index < next.queue.length) {
+        next.queue[index].positionMs = PlaybackQueueItem.normalizePositionMs(next.startPositionMs)
+        next.queue[index].durationMs = PlaybackQueueItem.normalizeDurationMs(next.durationMs)
+        if (next.queue[index].durationMs > 0) {
+          next.queue[index].positionMs = Math.min(next.queue[index].positionMs, next.queue[index].durationMs)
         }
       }
-      return null
-    }
-
-    if (currentEpisodeIndex > 0) {
-      return this.buildEpisodeTarget(selectedRoadIndex, currentEpisodeIndex - 1, roads)
-    }
-    for (let i = selectedRoadIndex - 1; i >= 0; i--) {
-      if (roads[i].episodes.length > 0) {
-        return this.buildEpisodeTarget(i, roads[i].episodes.length - 1, roads)
+      this.sessionManager.update(next)
+      this.sessionManager.replaceReporter(session.id, resolver.createReporterForSession(next))
+      if (this.playerEngine !== null) {
+        this.playerEngine.onStateChange((_state: PlayerState) => {})
+        this.playerEngine.release()
+        this.playerEngine = null
       }
-    }
-    return null
-  }
-
-  private buildEpisodeTarget(roadIndex: number, episodeIndex: number,
-    roads: PlaybackRoad[]): PiPEpisodeTarget | null {
-    if (roadIndex < 0 || roadIndex >= roads.length || episodeIndex < 0 ||
-      episodeIndex >= roads[roadIndex].episodes.length) {
-      return null
-    }
-    const episode = roads[roadIndex].episodes[episodeIndex]
-    const target = new PiPEpisodeTarget()
-    target.roadIndex = roadIndex
-    target.episodeIndex = episodeIndex
-    target.name = episode.name
-    target.url = episode.url
-    return target
-  }
-
-  private switchEpisode(direction: number): void {
-    if (this.isRestoring) {
-      return
-    }
-    const target = this.findAdjacentEpisode(direction)
-    if (target === null) {
+      this.playbackOptions = PlaybackOptionsAdapter.fromStream(next.stream, next.startPositionMs)
+      this.initialPositionMs = next.startPositionMs
+      this.syntheticPositionMs = next.startPositionMs
+      this.lastState = new PlayerState()
+      this.lastState.positionMs = next.startPositionMs
+      this.lastClockMs = Date.now()
+      this.desiredPlaying = true
+      this.clockPlaying = true
+      this.completed = false
+      this.syncPlaybackStoreMedia()
       this.updateEpisodeControlStatus()
-      return
+      await this.prepareEngine()
+    } catch (err) {
+      logger.warn('PiP queue switch failed: %{public}s', err instanceof Error ? err.message : String(err))
     }
-
-    this.route.params['videoUrl'] = ''
-    this.route.params['episodeUrl'] = target.url
-    this.route.params['episodeName'] = target.name
-    this.route.params['selectedRoadIndex'] = target.roadIndex
-    this.route.params['currentEpisodeIndex'] = target.episodeIndex
-    this.route.params['historyPositionMs'] = 0
-    this.route.params['resumeTypeNodePiP'] = true
-    this.playbackStore.updateEpisodeAvailability(this.findAdjacentEpisode(1) !== null,
-      this.findAdjacentEpisode(-1) !== null, 'typenode-pip')
-    this.isRestoring = true
-    logger.info('TypeNode PiP switch episode: road=%{public}d episode=%{public}d direction=%{public}d',
-      target.roadIndex, target.episodeIndex, direction)
-
-    const controller = this.pipController
-    if (controller === null) {
-      this.navigateToPlayerPage(0)
-      return
-    }
-    controller.stopPiP().then(() => {
-      this.navigateToPlayerPage(0)
-    }).catch((_err: BusinessError) => {
-      this.navigateToPlayerPage(0)
-    })
   }
 
   private restoreToPlayerPage(): void {
@@ -397,9 +442,20 @@ export class TypeNodePiPSession {
       const key = keys[i]
       params[key] = this.route.params[key]
     }
-    const restoredPositionMs = positionOverrideMs !== undefined ? positionOverrideMs :
+    const session = this.getSession()
+    const requestedPositionMs = positionOverrideMs !== undefined ? positionOverrideMs :
       Math.max(this.getCurrentPositionMs(), this.initialPositionMs)
-    params['historyPositionMs'] = restoredPositionMs
+    const restoredPositionMs = this.normalizePosition(requestedPositionMs,
+      session === null ? 0 : session.durationMs)
+    if (session !== null) {
+      session.startPositionMs = restoredPositionMs
+      if (session.queueIndex >= 0 && session.queueIndex < session.queue.length) {
+        session.queue[session.queueIndex].positionMs = restoredPositionMs
+        const sessionDurationMs = PlaybackQueueItem.normalizeDurationMs(session.durationMs)
+        if (sessionDurationMs > 0) session.queue[session.queueIndex].durationMs = sessionDurationMs
+      }
+      this.sessionManager.update(session)
+    }
     logger.info('Restore player page from TypeNode PiP position=%{public}d initial=%{public}d last=%{public}d synthetic=%{public}d',
       restoredPositionMs, this.initialPositionMs, this.lastState.positionMs, this.syntheticPositionMs)
     if (this.uiContext !== null) {
@@ -407,7 +463,7 @@ export class TypeNodePiPSession {
         url: this.route.url,
         params: params
       }).then(() => {
-        this.release(false)
+        this.release(false, false)
       }).catch((err: Error) => {
         logger.warn('Restore player page failed: %{public}s', err.message)
         this.release(true)
@@ -418,7 +474,7 @@ export class TypeNodePiPSession {
       url: this.route.url,
       params: params
     }).then(() => {
-      this.release(false)
+      this.release(false, false)
     }).catch((err: Error) => {
       logger.warn('Restore player page failed: %{public}s', err.message)
       this.release(true)
@@ -426,12 +482,12 @@ export class TypeNodePiPSession {
   }
 
   private registerPlaybackStoreActions(): void {
-    const actions = new PlaybackSessionActions()
+    const actions = new NowPlayingActions()
     actions.onPlay = () => {
       this.desiredPlaying = true
       this.syncPlaybackClock(true)
       this.updatePlayPauseControlStatus(true)
-      this.playbackStore.updatePlayback(this.getCurrentPositionMs(), true, 'typenode-pip')
+      this.nowPlayingStore.updatePlayback(this.getCurrentPositionMs(), true, PIP_OWNER_ID)
       if (this.playerEngine !== null) {
         this.playerEngine.play()
       }
@@ -440,7 +496,7 @@ export class TypeNodePiPSession {
       this.desiredPlaying = false
       this.syncPlaybackClock(false)
       this.updatePlayPauseControlStatus(false)
-      this.playbackStore.updatePlayback(this.getCurrentPositionMs(), false, 'typenode-pip')
+      this.nowPlayingStore.updatePlayback(this.getCurrentPositionMs(), false, PIP_OWNER_ID)
       if (this.playerEngine !== null) {
         this.playerEngine.pause()
       }
@@ -460,27 +516,18 @@ export class TypeNodePiPSession {
     actions.onPrevious = () => {
       this.switchEpisode(-1)
     }
-    this.playbackStore.setActions(actions, 'typenode-pip')
+    this.nowPlayingStore.setActions(actions, PIP_OWNER_ID)
   }
 
   private syncPlaybackStoreMedia(): void {
     if (this.playbackOptions === null) {
       return
     }
-    const title = this.readRouteString('animeName', this.readRouteString('videoFileName', '正在播放'))
-    const subtitle = this.readRouteString('episodeName', '')
-    const cover = this.readRouteString('bangumiCover', this.readRouteString('animeCover',
-      this.readRouteString('coverFallback', '')))
-    this.playbackStore.updateMediaFromOptions(this.playbackOptions, title, subtitle, cover,
-      this.findAdjacentEpisode(1) !== null, this.findAdjacentEpisode(-1) !== null, 'typenode-pip')
-  }
-
-  private readRouteString(key: string, fallback: string): string {
-    const value = this.route.params[key]
-    if (value === undefined || value === null) {
-      return fallback
-    }
-    return String(value)
+    const session = this.getSession()
+    if (session === null) return
+    this.nowPlayingStore.updateMediaFromOptions(this.playbackOptions, session.media.title,
+      session.media.subtitle, session.media.artwork, session.durationMs,
+      this.hasAdjacentItem(1), this.hasAdjacentItem(-1), PIP_OWNER_ID)
   }
 
   private clonePlaybackOptions(options: PlaybackOptions): PlaybackOptions {
@@ -508,7 +555,7 @@ export class TypeNodePiPSession {
     try {
       const state = this.playerEngine.getState()
       this.lastState = state
-      if (state.positionMs > 0) {
+      if (Number.isFinite(state.positionMs) && state.positionMs > 0) {
         this.syntheticPositionMs = Math.max(this.syntheticPositionMs, state.positionMs)
       }
     } catch (_err) {
@@ -527,28 +574,49 @@ export class TypeNodePiPSession {
   }
 
   private getCurrentPositionMs(): number {
-    const enginePositionMs = this.lastState.positionMs > 0 ? this.lastState.positionMs : 0
-    return Math.max(enginePositionMs, this.syntheticPositionMs, this.initialPositionMs)
+    const enginePositionMs = Number.isFinite(this.lastState.positionMs) && this.lastState.positionMs > 0 ?
+      this.lastState.positionMs : 0
+    return this.normalizePosition(Math.max(enginePositionMs, this.syntheticPositionMs, this.initialPositionMs),
+      this.getCurrentDurationMs())
   }
 
   private getCurrentDurationMs(): number {
-    if (this.lastState.durationMs > 0) {
+    if (Number.isFinite(this.lastState.durationMs) && this.lastState.durationMs > 0) {
       return this.lastState.durationMs
     }
     return Number.MAX_SAFE_INTEGER
   }
 
+  private normalizePosition(value: number, durationMs: number = 0): number {
+    if (!Number.isFinite(value) || value <= 0) return 0
+    const position = Math.floor(value)
+    return Number.isFinite(durationMs) && durationMs > 0 ? Math.min(position, Math.floor(durationMs)) : position
+  }
+
+  private static normalizeText(value: string): string {
+    return typeof value === 'string' ? value.trim() : ''
+  }
+
   private seekPiP(positionMs: number): void {
-    this.syntheticPositionMs = Math.max(0, positionMs)
+    this.initialPositionMs = this.normalizePosition(positionMs, this.getCurrentDurationMs())
+    this.syntheticPositionMs = this.initialPositionMs
     this.lastState.positionMs = this.syntheticPositionMs
     this.lastClockMs = Date.now()
-    this.playbackStore.updatePlayback(this.syntheticPositionMs, this.desiredPlaying, 'typenode-pip')
+    this.nowPlayingStore.updatePlayback(this.syntheticPositionMs, this.desiredPlaying, PIP_OWNER_ID)
     if (this.playerEngine !== null) {
       this.playerEngine.seek(this.syntheticPositionMs)
     }
   }
 
-  private release(resetPlaybackStore: boolean = true): void {
+  private release(resetPlaybackStore: boolean = true, releaseSession: boolean = true): void {
+    this.queueSwitchToken++
+    const session = this.getSession()
+    if (releaseSession && this.ownsSession && session !== null) {
+      this.refreshEngineState()
+      const controller = this.sessionManager.getReportController(session.id)
+      if (controller !== null) void controller.stop(this.getCurrentPositionMs(), session.durationMs, this.lastState.speed)
+      this.sessionManager.release(session.id)
+    }
     if (this.pipController !== null) {
       try {
         this.pipController.off('stateChange')
@@ -558,6 +626,7 @@ export class TypeNodePiPSession {
       this.pipController = null
     }
     if (this.playerEngine !== null) {
+      this.playerEngine.onStateChange((_state: PlayerState) => {})
       this.playerEngine.release()
       this.playerEngine = null
     }
@@ -570,10 +639,11 @@ export class TypeNodePiPSession {
     this.isActive = false
     this.isCreating = false
     this.isRestoring = false
+    this.ownsSession = false
     if (resetPlaybackStore) {
-      this.playbackStore.reset('typenode-pip')
+      this.nowPlayingStore.reset(PIP_OWNER_ID)
     } else {
-      this.playbackStore.clearActions('typenode-pip')
+      this.nowPlayingStore.clearActions(PIP_OWNER_ID)
     }
   }
 }

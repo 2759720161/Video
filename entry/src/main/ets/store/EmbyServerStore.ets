@@ -1,4 +1,4 @@
-import { EmbyServerConfig } from '../models/EmbyModels'
+import { EmbyServerConfig } from '../providers/emby/EmbyModels'
 import { PreferencesStore } from './PreferencesStore'
 
 const PREFS_KEY_EMBY_SERVER: string = 'embyServerConfigV1'
@@ -9,11 +9,23 @@ export class EmbyServerStore {
 
   static async load(): Promise<EmbyServerConfig | null> {
     const raw = await PreferencesStore.getInstance().getString(PREFS_KEY_EMBY_SERVER, '')
+    return EmbyServerStore.parse(raw)
+  }
+
+  /** Migration uses strict reads so a transient storage failure can retry. */
+  static async loadStrict(): Promise<EmbyServerConfig | null> {
+    const raw = await PreferencesStore.getInstance().getStringStrict(PREFS_KEY_EMBY_SERVER, '')
+    return EmbyServerStore.parse(raw)
+  }
+
+  private static parse(raw: string): EmbyServerConfig | null {
     if (raw.length === 0) {
       return null
     }
     try {
-      const value = JSON.parse(raw) as Record<string, Object>
+      const parsed = JSON.parse(raw) as Object
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+      const value = parsed as Record<string, Object>
       const config = new EmbyServerConfig()
       config.baseUrl = EmbyServerStore.readString(value, 'baseUrl')
       config.serverId = EmbyServerStore.readString(value, 'serverId')

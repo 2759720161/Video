@@ -4,10 +4,16 @@ import { BusinessError } from '@kit.BasicServicesKit'
 import { HdsNavigation, HdsNavigationIconOptions, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
 import { LocalFilePicker } from '../../services/LocalFilePicker'
 import { LocalVideoRecord } from '../../models/LocalVideoRecord'
-import { PlaybackQueueCodec } from '../../models/PlaybackQueueItem'
+import { LocalPlaybackLauncher } from '../../services/LocalPlaybackLauncher'
 import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
+import { PlaybackHistoryStore } from '../../store/PlaybackHistoryStore'
+import { MediaSourceStore, MEDIA_SOURCE_VERSION_KEY } from '../../store/MediaSourceStore'
+import { PlaybackHistoryRecord } from '../../models/PlaybackHistoryRecord'
+import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
+import { LocalPlaybackIdentity } from '../../providers/local/LocalPlaybackIdentity'
 import { LOCAL_VIDEO_HISTORY_VERSION_KEY } from '../../store/LocalVideoHistoryChangeSignal'
 import { Logger } from '../../utils/Logger'
+import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
 import {
   getBottomSpacerHeight,
   getTopSpacerHeight,
@@ -33,6 +39,8 @@ struct ContinueWatchingPage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
   @StorageLink('appRdbReady') @Watch('onRdbReadyChanged') appRdbReady: boolean = false
   @StorageLink(LOCAL_VIDEO_HISTORY_VERSION_KEY) @Watch('onHistoryChanged') historyVersion: number = 0
+  @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onSourceChanged') sourceVersion: number = 0
+  @StorageLink(PLAYBACK_HISTORY_VERSION_KEY) @Watch('onPlaybackHistoryChanged') playbackHistoryVersion: number = 0
   @State records: LocalVideoRecord[] = []
   @State activeFilter: string = 'all'
   @State featuredIndex: number = 0
@@ -41,6 +49,8 @@ struct ContinueWatchingPage {
   @State showDeleteDialog: boolean = false
   private scroller: Scroller = new Scroller()
   private historyStore: LocalVideoHistoryStore = new LocalVideoHistoryStore()
+  private unifiedHistoryStore: PlaybackHistoryStore = new PlaybackHistoryStore()
+  private reloadGeneration: number = 0
 
   aboutToAppear(): void {
     this.reloadHistory()
@@ -68,6 +78,14 @@ struct ContinueWatchingPage {
     if (this.appRdbReady) {
       this.reloadHistory()
     }
+  }
+
+  onSourceChanged(): void {
+    if (this.appRdbReady) this.reloadHistory()
+  }
+
+  onPlaybackHistoryChanged(): void {
+    if (this.appRdbReady) this.reloadHistory()
   }
 
   build() {
@@ -388,10 +406,29 @@ struct ContinueWatchingPage {
     if (!this.appRdbReady) {
       return
     }
+    const generation = ++this.reloadGeneration
     try {
-      this.records = await this.historyStore.getAll()
+      const localRecords = await this.historyStore.getAll()
+      if (generation !== this.reloadGeneration) return
+      const unifiedRecords = await this.unifiedHistoryStore.getAll()
+      if (generation !== this.reloadGeneration) return
+      const sources = await MediaSourceStore.getAll()
+      if (generation !== this.reloadGeneration) return
+      const enabledSources: Record<string, boolean> = {}
+      for (let i = 0; i < sources.length; i++) enabledSources[sources[i].id] = sources[i].enabled
+      const merged: LocalVideoRecord[] = localRecords
+      for (let i = 0; i < unifiedRecords.length; i++) {
+        const unified = unifiedRecords[i]
+        if (unified.sourceId === 'local') continue
+        if (enabledSources[unified.sourceId] !== true) continue
+        merged.push(this.toDisplayRecord(unified))
+      }
+      merged.sort((left: LocalVideoRecord, right: LocalVideoRecord) => right.lastPlayedAt - left.lastPlayedAt)
+      if (generation !== this.reloadGeneration) return
+      this.records = merged
       this.removeMissingSelections()
     } catch (err) {
+      if (generation !== this.reloadGeneration) return
       logger.warn('读取播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
       this.records = []
     }
@@ -551,12 +588,18 @@ struct ContinueWatchingPage {
   }
 
   private async removeRecord(record: LocalVideoRecord): Promise<void> {
-    if (record.id < 0) {
-      return
-    }
     try {
+      if (record.sourceId !== 'local') {
+        const unifiedId = record.id < 0 ? -record.id - 2 : record.id
+        if (unifiedId <= 0) return
+        await this.unifiedHistoryStore.deleteById(unifiedId)
+        this.removeRecordFromPage(record.id)
+        return
+      }
       await LocalFilePicker.revokeUriPermission(record.fileUri)
       await this.historyStore.deleteById(record.id)
+      const unifiedLocal = await this.findLocalUnifiedHistory(record)
+      if (unifiedLocal !== null) await this.unifiedHistoryStore.deleteById(unifiedLocal.id)
       this.removeRecordFromPage(record.id)
     } catch (err) {
       logger.warn('移除播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
@@ -617,6 +660,7 @@ struct ContinueWatchingPage {
     }
     try {
       await this.historyStore.clearAll()
+      await this.unifiedHistoryStore.clearAll()
       this.records = []
       this.exitEditMode()
     } catch (err) {
@@ -789,10 +833,19 @@ struct ContinueWatchingPage {
       }
     }
     try {
+      const localIds: number[] = []
       for (let i = 0; i < removed.length; i++) {
-        await LocalFilePicker.revokeUriPermission(removed[i].fileUri)
+        const record = removed[i]
+        if (record.sourceId === 'local') {
+          await LocalFilePicker.revokeUriPermission(record.fileUri)
+          localIds.push(record.id)
+          const unifiedLocal = await this.findLocalUnifiedHistory(record)
+          if (unifiedLocal !== null) await this.unifiedHistoryStore.deleteById(unifiedLocal.id)
+        } else {
+          await this.unifiedHistoryStore.deleteById(-record.id - 2)
+        }
       }
-      await this.historyStore.deleteByIds(ids)
+      if (localIds.length > 0) await this.historyStore.deleteByIds(localIds)
       this.records = this.records.filter((record: LocalVideoRecord) => ids.indexOf(record.id) < 0)
       this.exitEditMode()
     } catch (err) {
@@ -813,53 +866,50 @@ struct ContinueWatchingPage {
       if (result === null) {
         return
       }
-      router.pushUrl({
-        url: 'pages/player/LocalPlayerPage',
-        params: {
-          videoUri: result.uri,
-          videoFileName: result.fileName,
-          videoFileSize: result.fileSize,
-          historyPositionMs: 0,
-          playlistJson: JSON.stringify([{ uri: result.uri, name: result.fileName, size: result.fileSize, positionMs: 0 }]),
-          queueIndex: 0
-        }
-      })
+      const record = new LocalVideoRecord()
+      record.fileUri = result.uri
+      record.fileName = result.fileName
+      record.fileSize = result.fileSize
+      await LocalPlaybackLauncher.open(this.getUIContext(), record, [record])
     } catch (err) {
       logger.warn('打开本地视频失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
   }
 
   private async openRecord(record: LocalVideoRecord, fromBeginning: boolean = false): Promise<void> {
-    if (!await LocalFilePicker.ensureReadableUri(record.fileUri)) {
+    if (record.sourceId !== 'local') {
       try {
-        const context = getContext(this) as common.UIAbilityContext
-        if (!await LocalFilePicker.authorizeExistingUri(context, record.fileUri)) {
-          return
-        }
+        await ProviderPlaybackLauncher.openById(this.getUIContext(), record.sourceId, record.fileKey,
+          fromBeginning ? 0 : record.positionMs, fromBeginning)
       } catch (err) {
-        logger.warn('重新授权播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
-        return
+        logger.warn('打开远程播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
       }
+      return
     }
-    let index = 0
-    for (let i = 0; i < this.records.length; i++) {
-      if (this.records[i].fileUri === record.fileUri && this.records[i].fileSize === record.fileSize) {
-        index = i
-        break
-      }
-    }
-    router.pushUrl({
-      url: 'pages/player/LocalPlayerPage',
-      params: {
-        videoUri: record.fileUri,
-        videoFileName: record.fileName,
-        videoFileSize: record.fileSize,
-        historyPositionMs: fromBeginning ? 0 : record.positionMs,
-        historyDurationMs: record.durationMs,
-        playlistJson: PlaybackQueueCodec.encode(this.records),
-        queueIndex: index
-      }
-    })
+    await LocalPlaybackLauncher.open(this.getUIContext(), record, this.records, fromBeginning)
+  }
+
+  private toDisplayRecord(record: PlaybackHistoryRecord): LocalVideoRecord {
+    const display = new LocalVideoRecord()
+    display.id = -record.id - 2
+    display.sourceId = record.sourceId
+    display.fileKey = record.mediaId
+    display.fileName = record.title.length > 0 ? record.title : record.mediaId
+    display.coverUri = record.artwork
+    display.positionMs = record.positionMs
+    display.durationMs = record.durationMs
+    display.lastPlayedAt = record.lastPlayedAt
+    return display
+  }
+
+  /** 兼容迁移前使用 URI 复合键的本地统一历史。 */
+  private async findLocalUnifiedHistory(record: LocalVideoRecord): Promise<PlaybackHistoryRecord | null> {
+    const opaqueId = LocalPlaybackIdentity.fromRecord(record)
+    const current = await this.unifiedHistoryStore.get('local', opaqueId)
+    if (current !== null) return current
+    const legacyKey = typeof record.fileKey === 'string' ? record.fileKey.trim() : ''
+    return legacyKey.length > 0 && legacyKey !== opaqueId
+      ? await this.unifiedHistoryStore.get('local', legacyKey) : null
   }
 
   private formatLastPlayedAt(timestamp: number): string {

@@ -1,4 +1,4 @@
-import { LocalPage } from './local/LocalPage'
+import { LibraryPage } from './library/LibraryPage'
 import { SettingsPage } from './settings/SettingsPage'
 import { HdsAnimationMode, HdsTabs, HdsTabsController, HdsTabsFloatingStyle } from '@kit.UIDesignKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
@@ -29,7 +29,7 @@ struct Index {
     Column() {
       HdsTabs({ controller: this.tabsController, index: this.currentTab }) {
         TabContent() {
-          LocalPage({ isActive: this.currentTab === 0 })
+          LibraryPage({ isActive: this.currentTab === 0 })
         }
         .tabBar(this.tabStyle($r('sys.symbol.folder'), $r('sys.symbol.folder_fill'), '媒体库'))
 

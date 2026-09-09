@@ -1,6 +1,6 @@
 export class RdbConstants {
   static readonly DB_NAME: string = 'kazumi_main.db'
-  static readonly DB_VERSION: number = 12
+  static readonly DB_VERSION: number = 13
   static readonly DB_SECURITY_LEVEL: number = 1
 
   static readonly TABLE_RULE_SOURCE: string = 'rule_source'
@@ -9,6 +9,7 @@ export class RdbConstants {
   static readonly TABLE_SEARCH_HISTORY: string = 'search_history'
   static readonly TABLE_COLLECT_CHANGE: string = 'collect_change'
   static readonly TABLE_LOCAL_VIDEO_HISTORY: string = 'local_video_history'
+  static readonly TABLE_PLAYBACK_HISTORY: string = 'playback_history'
 
   static readonly COL_ID: string = 'id'
   static readonly COL_NAME: string = 'name'
@@ -70,4 +71,9 @@ export class RdbConstants {
   static readonly COL_DANMAKU_COUNT: string = 'danmaku_count'
   static readonly COL_EXTERNAL_SUBTITLE_FILE_NAME: string = 'external_subtitle_file_name'
   static readonly COL_EXTERNAL_SUBTITLE_URI: string = 'external_subtitle_uri'
+  static readonly COL_MEDIA_ID: string = 'media_id'
+  static readonly COL_TITLE: string = 'title'
+  static readonly COL_SUBTITLE: string = 'subtitle'
+  static readonly COL_ARTWORK: string = 'artwork'
+  static readonly COL_CONTEXT_JSON: string = 'context_json'
 }

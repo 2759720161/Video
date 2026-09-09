@@ -1,8 +1,9 @@
 import { promptAction } from '@kit.ArkUI'
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit'
-import { EmbyClient } from '../../network/EmbyClient'
-import { EmbyServerConfig } from '../../models/EmbyModels'
-import { EmbyServerStore } from '../../store/EmbyServerStore'
+import { EmbyClient } from '../../providers/emby/EmbyClient'
+import { EmbyServerConfig } from '../../providers/emby/EmbyModels'
+import { MediaSourceStore } from '../../store/MediaSourceStore'
+import { EmbySourceConfigCodec } from '../../providers/emby/EmbySourceConfig'
 import {
   buildTitleBarOptions,
   getBottomSpacerHeight,
@@ -13,7 +14,7 @@ import {
 
 @Entry
 @Component
-struct EmbySettingsPage {
+struct EmbySourceEditPage {
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
@@ -22,9 +23,15 @@ struct EmbySettingsPage {
   @State private password: string = ''
   @State private connectedConfig: EmbyServerConfig | null = null
   @State private connecting: boolean = false
+  @State private sourceId: string = ''
+  private loadGeneration: number = 0
   private scroller: Scroller = new Scroller()
 
   aboutToAppear(): void {
+    const params = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined
+    if (params !== undefined && typeof params['sourceId'] === 'string') {
+      this.sourceId = (params['sourceId'] as string).trim()
+    }
     this.loadConfig()
   }
 
@@ -208,10 +215,20 @@ struct EmbySettingsPage {
   }
 
   private async loadConfig(): Promise<void> {
-    this.connectedConfig = await EmbyServerStore.load()
-    if (this.connectedConfig !== null) {
-      this.serverUrl = this.connectedConfig!.baseUrl
-      this.userName = this.connectedConfig!.userName
+    const generation = ++this.loadGeneration
+    try {
+      if (this.sourceId.length > 0) {
+        const source = await MediaSourceStore.getById(this.sourceId)
+        if (generation !== this.loadGeneration) return
+        this.connectedConfig = source === null ? null : EmbySourceConfigCodec.decode(source.configJson)
+      }
+      if (generation !== this.loadGeneration) return
+      if (this.connectedConfig !== null) {
+        this.serverUrl = this.connectedConfig!.baseUrl
+        this.userName = this.connectedConfig!.userName
+      }
+    } catch (_err) {
+      if (generation === this.loadGeneration) this.connectedConfig = null
     }
   }
 
@@ -220,17 +237,19 @@ struct EmbySettingsPage {
       promptAction.showToast({ message: '请输入服务器地址和用户名' })
       return
     }
+    ++this.loadGeneration
     this.connecting = true
     try {
       const deviceId = this.connectedConfig !== null ? this.connectedConfig!.deviceId : ''
       const config = await EmbyClient.login(this.serverUrl, this.userName, this.password, deviceId)
-      await EmbyServerStore.save(config)
+      const sourceId = await MediaSourceStore.upsertEmby(config, this.sourceId)
+      this.sourceId = sourceId
       this.connectedConfig = config
       this.serverUrl = config.baseUrl
       this.userName = config.userName
       this.password = ''
       promptAction.showToast({ message: '已连接 ' + config.serverName })
-      await this.openLibrary(true)
+      await this.openLibrary(true, sourceId)
     } catch (err) {
       promptAction.showToast({ message: err instanceof Error ? err.message : 'Emby 连接失败' })
     } finally {
@@ -238,13 +257,13 @@ struct EmbySettingsPage {
     }
   }
 
-  private async openLibrary(replaceCurrent: boolean): Promise<void> {
+  private async openLibrary(replaceCurrent: boolean, sourceId: string = ''): Promise<void> {
     try {
       const pageRouter = this.getUIContext().getRouter()
       if (replaceCurrent) {
-        await pageRouter.replaceUrl({ url: 'pages/emby/EmbyLibraryPage' })
+        await pageRouter.replaceUrl({ url: 'pages/emby/EmbyLibraryPage', params: { sourceId: sourceId } })
       } else {
-        await pageRouter.pushUrl({ url: 'pages/emby/EmbyLibraryPage' })
+        await pageRouter.pushUrl({ url: 'pages/emby/EmbyLibraryPage', params: { sourceId: sourceId } })
       }
     } catch (_err) {
       promptAction.showToast({ message: '媒体库页面打开失败，请返回后从 Emby 卡片重试' })
@@ -258,7 +277,7 @@ struct EmbySettingsPage {
         await new EmbyClient(config).logout()
       } catch (_err) {}
     }
-    await EmbyServerStore.clear()
+    if (this.sourceId.length > 0) await MediaSourceStore.remove(this.sourceId)
     this.connectedConfig = null
     this.password = ''
     promptAction.showToast({ message: '已断开 Emby' })

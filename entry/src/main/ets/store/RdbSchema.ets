@@ -110,6 +110,24 @@ export class RdbSchema {
       `)`;
   }
 
+  static getCreatePlaybackHistoryTable(): string {
+    return `CREATE TABLE IF NOT EXISTS ${RdbConstants.TABLE_PLAYBACK_HISTORY} (` +
+      `${RdbConstants.COL_ID} INTEGER PRIMARY KEY AUTOINCREMENT, ` +
+      `${RdbConstants.COL_SOURCE_ID} TEXT NOT NULL DEFAULT '', ` +
+      `${RdbConstants.COL_MEDIA_ID} TEXT NOT NULL DEFAULT '', ` +
+      `${RdbConstants.COL_TITLE} TEXT NOT NULL DEFAULT '', ` +
+      `${RdbConstants.COL_SUBTITLE} TEXT NOT NULL DEFAULT '', ` +
+      `${RdbConstants.COL_ARTWORK} TEXT NOT NULL DEFAULT '', ` +
+      `${RdbConstants.COL_POSITION_MS} INTEGER NOT NULL DEFAULT 0, ` +
+      `${RdbConstants.COL_DURATION_MS} INTEGER NOT NULL DEFAULT 0, ` +
+      `${RdbConstants.COL_LAST_PLAYED_AT} INTEGER NOT NULL DEFAULT 0, ` +
+      `${RdbConstants.COL_CONTEXT_JSON} TEXT NOT NULL DEFAULT '', ` +
+      `${RdbConstants.COL_CREATED_AT} INTEGER NOT NULL DEFAULT 0, ` +
+      `${RdbConstants.COL_UPDATED_AT} INTEGER NOT NULL DEFAULT 0, ` +
+      `UNIQUE(${RdbConstants.COL_SOURCE_ID}, ${RdbConstants.COL_MEDIA_ID})` +
+      `)`;
+  }
+
   static getCreateIndexes(): string[] {
     return [
       `CREATE INDEX IF NOT EXISTS idx_rule_source_name ON ${RdbConstants.TABLE_RULE_SOURCE}(${RdbConstants.COL_NAME})`,
@@ -122,7 +140,8 @@ export class RdbSchema {
       `CREATE INDEX IF NOT EXISTS idx_search_history_timestamp ON ${RdbConstants.TABLE_SEARCH_HISTORY}(${RdbConstants.COL_TIMESTAMP})`,
       `CREATE INDEX IF NOT EXISTS idx_collect_change_bangumi_id ON ${RdbConstants.TABLE_COLLECT_CHANGE}(${RdbConstants.COL_BANGUMI_ID})`,
       `CREATE INDEX IF NOT EXISTS idx_local_video_history_file_key ON ${RdbConstants.TABLE_LOCAL_VIDEO_HISTORY}(${RdbConstants.COL_FILE_KEY})`,
-      `CREATE INDEX IF NOT EXISTS idx_local_video_history_file_name ON ${RdbConstants.TABLE_LOCAL_VIDEO_HISTORY}(${RdbConstants.COL_FILE_NAME})`
+      `CREATE INDEX IF NOT EXISTS idx_local_video_history_file_name ON ${RdbConstants.TABLE_LOCAL_VIDEO_HISTORY}(${RdbConstants.COL_FILE_NAME})`,
+      `CREATE INDEX IF NOT EXISTS idx_playback_history_last_played_at ON ${RdbConstants.TABLE_PLAYBACK_HISTORY}(${RdbConstants.COL_LAST_PLAYED_AT})`
     ];
   }
 
@@ -133,7 +152,8 @@ export class RdbSchema {
       RdbSchema.getCreateWatchHistoryTable(),
       RdbSchema.getCreateSearchHistoryTable(),
       RdbSchema.getCreateCollectChangeTable(),
-      RdbSchema.getCreateLocalVideoHistoryTable()
+      RdbSchema.getCreateLocalVideoHistoryTable(),
+      RdbSchema.getCreatePlaybackHistoryTable()
     ];
     const indexes = RdbSchema.getCreateIndexes();
     for (let i = 0; i < indexes.length; i++) {

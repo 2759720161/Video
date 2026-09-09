@@ -8,6 +8,19 @@ export class EmbyServerConfig {
   accessToken: string = ''
   deviceId: string = ''
 
+  copy(): EmbyServerConfig {
+    const config = new EmbyServerConfig()
+    config.baseUrl = this.baseUrl
+    config.serverId = this.serverId
+    config.serverName = this.serverName
+    config.serverVersion = this.serverVersion
+    config.userId = this.userId
+    config.userName = this.userName
+    config.accessToken = this.accessToken
+    config.deviceId = this.deviceId
+    return config
+  }
+
   isValid(): boolean {
     return this.baseUrl.length > 0 && this.userId.length > 0 && this.accessToken.length > 0
   }
@@ -23,6 +36,7 @@ export class EmbyItem {
   id: string = ''
   name: string = ''
   type: string = ''
+  parentId: string = ''
   collectionType: string = ''
   isFolder: boolean = false
   runTimeTicks: number = 0
@@ -37,11 +51,15 @@ export class EmbyItem {
   userData: EmbyUserData = new EmbyUserData()
 
   durationMs(): number {
-    return Math.max(0, Math.floor(this.runTimeTicks / 10000))
+    return Number.isFinite(this.runTimeTicks) && this.runTimeTicks > 0 ?
+      Math.floor(this.runTimeTicks / 10000) : 0
   }
 
   resumePositionMs(): number {
-    return Math.max(0, Math.floor(this.userData.playbackPositionTicks / 10000))
+    const positionMs = Number.isFinite(this.userData.playbackPositionTicks) && this.userData.playbackPositionTicks > 0 ?
+      Math.floor(this.userData.playbackPositionTicks / 10000) : 0
+    const durationMs = this.durationMs()
+    return durationMs > 0 ? Math.min(positionMs, durationMs) : positionMs
   }
 
   subtitle(): string {
@@ -84,16 +102,19 @@ export class EmbyPlaybackContext {
   }
 
   static decode(raw: string): EmbyPlaybackContext | null {
-    if (raw.length === 0) {
+    if (typeof raw !== 'string' || raw.length === 0) {
       return null
     }
     try {
-      const value = JSON.parse(raw) as Record<string, Object>
+      const parsed = JSON.parse(raw) as Object
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+      const value = parsed as Record<string, Object>
       const context = new EmbyPlaybackContext()
-      context.itemId = typeof value['itemId'] === 'string' ? value['itemId'] as string : ''
-      context.mediaSourceId = typeof value['mediaSourceId'] === 'string' ? value['mediaSourceId'] as string : ''
-      context.playSessionId = typeof value['playSessionId'] === 'string' ? value['playSessionId'] as string : ''
-      context.playMethod = typeof value['playMethod'] === 'string' ? value['playMethod'] as string : 'DirectStream'
+      context.itemId = typeof value['itemId'] === 'string' ? (value['itemId'] as string).trim() : ''
+      context.mediaSourceId = typeof value['mediaSourceId'] === 'string' ? (value['mediaSourceId'] as string).trim() : ''
+      context.playSessionId = typeof value['playSessionId'] === 'string' ? (value['playSessionId'] as string).trim() : ''
+      context.playMethod = typeof value['playMethod'] === 'string' ? (value['playMethod'] as string).trim() : 'DirectStream'
+      if (context.playMethod.length === 0) context.playMethod = 'DirectStream'
       return context.itemId.length > 0 ? context : null
     } catch (_err) {
       return null

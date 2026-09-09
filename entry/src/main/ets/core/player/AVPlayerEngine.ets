@@ -120,7 +120,8 @@ export class AVPlayerEngine implements IPlayerEngine {
       const key = sourceKeys[i]
       const normalizedKey = this.normalizeMediaHeaderName(key)
       const value = options.headers[key]
-      if (normalizedKey.length > 0 && value !== undefined && value.trim().length > 0) {
+      if (normalizedKey.length > 0 && value !== undefined && value.trim().length > 0 &&
+        value.indexOf('\r') < 0 && value.indexOf('\n') < 0) {
         headers[normalizedKey] = value.trim()
       }
     }
@@ -144,12 +145,28 @@ export class AVPlayerEngine implements IPlayerEngine {
         return 'User-Agent'
       case 'origin':
         return 'Origin'
+      case 'authorization':
+        return 'Authorization'
       case 'accept':
         return 'Accept'
       case 'accept-language':
         return 'Accept-Language'
+      case 'accept-encoding':
+        return 'Accept-Encoding'
+      case 'range':
+        return 'Range'
       default:
-        return ''
+        // Preserve provider-specific token headers (for example X-Client-Id)
+        // while rejecting separators that could alter the HTTP header block.
+        const custom = key.trim()
+        if (custom.length === 0) return ''
+        for (let i = 0; i < custom.length; i++) {
+          const code = custom.charCodeAt(i)
+          const alphaNumeric = (code >= 48 && code <= 57) ||
+            (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+          if (!alphaNumeric && custom[i] !== '-' && custom[i] !== '_') return ''
+        }
+        return custom
     }
   }
 
@@ -194,7 +211,8 @@ export class AVPlayerEngine implements IPlayerEngine {
           this.state.playing = false
           this.state.buffering = false
           if (this.avPlayer) {
-            this.state.durationMs = this.avPlayer.duration
+            this.state.durationMs = this.normalizeDurationMs(this.avPlayer.duration)
+            this.state.positionMs = this.normalizePositionMs(this.state.positionMs)
             const w = this.avPlayer.width
             const h = this.avPlayer.height
             if (w > 0 && h > 0) {
@@ -253,10 +271,11 @@ export class AVPlayerEngine implements IPlayerEngine {
     })
 
     this.avPlayer.on('timeUpdate', (time: number) => {
-      if (this.shouldRejectInitialSeekRegression(time, 'timeUpdate')) {
+      const normalizedTimeMs = this.normalizePositionMs(time)
+      if (this.shouldRejectInitialSeekRegression(normalizedTimeMs, 'timeUpdate')) {
         return
       }
-      this.state.positionMs = time
+      this.state.positionMs = normalizedTimeMs
       this.notifyStateChange()
     })
 
@@ -307,11 +326,12 @@ export class AVPlayerEngine implements IPlayerEngine {
       return
     }
     try {
-      logger.info('AVPlayer initial seek before play: %{public}dms', positionMs)
+      const normalizedPositionMs = this.normalizePositionMs(positionMs)
+      logger.info('AVPlayer initial seek before play: %{public}dms', normalizedPositionMs)
       this.pendingInitialPlayAfterSeek = true
-      this.pendingInitialSeekMs = positionMs
-      this.startInitialSeekGuard(positionMs)
-      this.avPlayer.seek(positionMs, media.SeekMode.SEEK_CLOSEST)
+      this.pendingInitialSeekMs = normalizedPositionMs
+      this.startInitialSeekGuard(normalizedPositionMs)
+      this.avPlayer.seek(normalizedPositionMs, media.SeekMode.SEEK_CLOSEST)
       this.startInitialSeekFallbackTimer()
     } catch (err) {
       logger.warn('AVPlayer initial seek threw, fallback to direct play: %{public}s',
@@ -325,7 +345,7 @@ export class AVPlayerEngine implements IPlayerEngine {
 
   private handleSeekDone(seekDoneTime: number): void {
     if (seekDoneTime >= 0) {
-      this.state.positionMs = seekDoneTime
+      this.state.positionMs = this.normalizePositionMs(seekDoneTime)
       if (this.pendingInitialPlayAfterSeek && this.pendingInitialSeekMs > 0) {
         this.startInitialSeekGuard(this.pendingInitialSeekMs)
       }
@@ -388,10 +408,11 @@ export class AVPlayerEngine implements IPlayerEngine {
 
   seek(positionMs: number): void {
     if (this.avPlayer) {
+      const normalizedPositionMs = this.normalizePositionMs(positionMs)
       this.clearInitialSeekGuard()
-      this.state.positionMs = positionMs
+      this.state.positionMs = normalizedPositionMs
       this.notifyStateChange()
-      this.avPlayer.seek(positionMs, media.SeekMode.SEEK_CLOSEST)
+      this.avPlayer.seek(normalizedPositionMs, media.SeekMode.SEEK_CLOSEST)
     }
   }
 
@@ -507,7 +528,7 @@ export class AVPlayerEngine implements IPlayerEngine {
   }
 
   async setSubtitleDelay(_offsetMs: number): Promise<void> {
-    // ArkUI fallback subtitles apply the delay in LocalPlayerPage's clock.
+    // ArkUI fallback subtitles apply the delay in PlayerPage's clock.
   }
 
   async deselectTrack(index: number): Promise<void> {
@@ -747,8 +768,10 @@ export class AVPlayerEngine implements IPlayerEngine {
       return
     }
     try {
-      const currentTime = this.avPlayer.currentTime
-      const duration = this.avPlayer.duration
+      const rawCurrentTime = this.avPlayer.currentTime
+      const currentTime = Number.isFinite(rawCurrentTime) && rawCurrentTime >= 0
+        ? this.normalizePositionMs(rawCurrentTime) : -1
+      const duration = this.normalizeDurationMs(this.avPlayer.duration)
       let changed = false
       if (currentTime >= 0 && currentTime !== this.state.positionMs) {
         if (this.shouldRejectInitialSeekRegression(currentTime, 'poll')) {
@@ -759,6 +782,7 @@ export class AVPlayerEngine implements IPlayerEngine {
       }
       if (duration > 0 && duration !== this.state.durationMs) {
         this.state.durationMs = duration
+        this.state.positionMs = this.normalizePositionMs(this.state.positionMs)
         changed = true
       }
       if (changed) {
@@ -767,6 +791,16 @@ export class AVPlayerEngine implements IPlayerEngine {
     } catch (_err) {
       logger.warn('AVPlayer progress polling failed')
     }
+  }
+
+  private normalizeDurationMs(value: number): number {
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+  }
+
+  private normalizePositionMs(value: number): number {
+    const positionMs = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+    const durationMs = this.normalizeDurationMs(this.state.durationMs)
+    return durationMs > 0 ? Math.min(positionMs, durationMs) : positionMs
   }
 
   private failPlayback(message: string): void {
