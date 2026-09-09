@@ -10,11 +10,11 @@ export class ProviderPlaybackResolver implements PlaybackResolver {
 
   constructor(provider: MediaProvider) { this.provider = provider }
 
-  async resolve(item: PlaybackQueueItem): Promise<PlaybackSession> {
+  async resolvePlayback(item: PlaybackQueueItem): Promise<PlaybackSession> {
     if (item === null || typeof item !== 'object' || Array.isArray(item)) {
       throw new Error('播放队列项无效')
     }
-    const session = await this.provider.resolve(item)
+    const session = await this.provider.resolvePlayback(item)
     if (session === null || typeof session !== 'object' || Array.isArray(session) ||
       session.media === null || typeof session.media !== 'object' || Array.isArray(session.media) ||
       session.stream === null || typeof session.stream !== 'object' || Array.isArray(session.stream)) {

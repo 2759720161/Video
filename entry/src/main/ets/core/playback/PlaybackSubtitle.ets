@@ -2,6 +2,9 @@
 export class PlaybackSubtitle {
   id: string = ''
   displayName: string = ''
+  language: string = ''
+  title: string = ''
+  isDefault: boolean = false
   url: string = ''
   headers: Record<string, string> = {}
 }

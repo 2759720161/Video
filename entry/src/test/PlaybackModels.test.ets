@@ -9,6 +9,7 @@ import { PlaybackReportController } from '../main/ets/core/playback/PlaybackRepo
 import { PlaybackOptionsAdapter } from '../main/ets/core/playback/PlaybackOptionsAdapter'
 import { PlaybackPosition } from '../main/ets/core/playback/PlaybackPosition'
 import { EmbyServerConfig } from '../main/ets/providers/emby/EmbyModels'
+import { PlaybackTestFactory } from './helpers/PlaybackTestFactory'
 
 class TestPlaybackReporter implements PlaybackReporter {
   events: string[] = []
@@ -43,7 +44,7 @@ export default function playbackModelsTest(): void {
     it('reporter_preserves_start_progress_stop_order_across_pip_handoff', 0, async () => {
       const manager = PlaybackSessionManager.getInstance()
       const reporter = new TestPlaybackReporter()
-      const id = manager.create(new PlaybackSession(), reporter)
+      const id = manager.create(PlaybackTestFactory.createSession(), reporter)
       try {
         const pageController = manager.getReportController(id)!
         pageController.update(1000, 100000, true, 1, true, 1000)
@@ -133,8 +134,8 @@ export default function playbackModelsTest(): void {
     })
 
     it('sessions_do_not_share_mutable_defaults', 0, () => {
-      const first = new PlaybackSession()
-      const second = new PlaybackSession()
+      const first = PlaybackTestFactory.createSession('test-source-a', 'test-media-a')
+      const second = PlaybackTestFactory.createSession('test-source-b', 'test-media-b')
       first.media.title = '第一集'
       first.stream.headers['Authorization'] = 'test-only'
       first.queue.push(LocalPlaybackQueueAdapter.fromRecord(new LocalVideoRecord()))
@@ -145,8 +146,8 @@ export default function playbackModelsTest(): void {
 
     it('manager_registers_unique_sessions_with_isolated_reporters', 0, () => {
       const manager = PlaybackSessionManager.getInstance()
-      const first = new PlaybackSession()
-      const second = new PlaybackSession()
+      const first = PlaybackTestFactory.createSession('test-source-a', 'test-media-a')
+      const second = PlaybackTestFactory.createSession('test-source-b', 'test-media-b')
       const reporter = new TestPlaybackReporter()
       const firstId = manager.create(first, reporter)
       const secondId = manager.create(second)
@@ -165,10 +166,10 @@ export default function playbackModelsTest(): void {
 
     it('duplicate_id_does_not_replace_session_or_reporter', 0, () => {
       const manager = PlaybackSessionManager.getInstance()
-      const original = new PlaybackSession()
+      const original = PlaybackTestFactory.createSession()
       const reporter = new TestPlaybackReporter()
       const id = manager.create(original, reporter)
-      const duplicate = new PlaybackSession()
+      const duplicate = PlaybackTestFactory.createSession()
       duplicate.id = id
       let rejected = false
       try {
@@ -188,8 +189,10 @@ export default function playbackModelsTest(): void {
     it('update_preserves_reporter_and_current_playback_for_pip', 0, () => {
       const manager = PlaybackSessionManager.getInstance()
       const reporter = new TestPlaybackReporter()
-      const id = manager.create(new PlaybackSession(), reporter)
+      const id = manager.create(PlaybackTestFactory.createSession(), reporter)
       const current = new PlaybackSession()
+      current.media.sourceId = 'test-source'
+      current.media.mediaId = 'test-media'
       current.id = id
       current.stream.url = 'https://example.invalid/episode-2'
       current.queueIndex = 1
@@ -207,7 +210,7 @@ export default function playbackModelsTest(): void {
 
     it('release_is_idempotent_and_late_update_cannot_resurrect_session', 0, () => {
       const manager = PlaybackSessionManager.getInstance()
-      const session = new PlaybackSession()
+      const session = PlaybackTestFactory.createSession()
       const id = manager.create(session, new TestPlaybackReporter())
       manager.release(id)
       manager.release(id)
@@ -234,11 +237,48 @@ export default function playbackModelsTest(): void {
       expect(manager.get('') === null).assertTrue()
     })
 
+    it('empty_source_id_is_rejected', 0, () => {
+      const manager = PlaybackSessionManager.getInstance()
+      const session = PlaybackTestFactory.createSession('', 'test-media')
+      let rejected = false
+      try {
+        manager.create(session)
+      } catch (_error) {
+        rejected = true
+      }
+      expect(rejected).assertTrue()
+    })
+
+    it('empty_media_id_is_rejected', 0, () => {
+      const manager = PlaybackSessionManager.getInstance()
+      const session = PlaybackTestFactory.createSession('test-source', '')
+      let rejected = false
+      try {
+        manager.create(session)
+      } catch (_error) {
+        rejected = true
+      }
+      expect(rejected).assertTrue()
+    })
+
+    it('empty_stream_url_is_rejected', 0, () => {
+      const manager = PlaybackSessionManager.getInstance()
+      const session = PlaybackTestFactory.createSession()
+      session.stream.url = ''
+      let rejected = false
+      try {
+        manager.create(session)
+      } catch (_error) {
+        rejected = true
+      }
+      expect(rejected).assertTrue()
+    })
+
     it('reused_id_does_not_retain_released_reporter', 0, () => {
       const manager = PlaybackSessionManager.getInstance()
-      const id = manager.create(new PlaybackSession(), new TestPlaybackReporter())
+      const id = manager.create(PlaybackTestFactory.createSession(), new TestPlaybackReporter())
       manager.release(id)
-      const next = new PlaybackSession()
+      const next = PlaybackTestFactory.createSession()
       next.id = id
       manager.create(next)
       try {

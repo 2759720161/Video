@@ -12,6 +12,8 @@ import type { MediaProvider } from '../base/MediaProvider'
 import { WebDavClient } from './WebDavClient'
 import { WebDavEntry } from './WebDavModels'
 import { WebDavSourceConfigCodec } from './WebDavSourceConfig'
+import { SecureCredentialStore } from '../../services/security/SecureCredentialStore'
+import { ProviderHealth } from '../../core/media/ProviderHealth'
 
 export class WebDavProvider implements MediaProvider {
   private source: MediaSourceInstance
@@ -22,9 +24,14 @@ export class WebDavProvider implements MediaProvider {
     this.client = client
   }
 
-  static fromSource(source: MediaSourceInstance): WebDavProvider {
+  static async fromSource(source: MediaSourceInstance): Promise<WebDavProvider> {
     const config = WebDavSourceConfigCodec.decode(source.configJson)
     if (config === null) throw new Error('WebDAV 配置无效')
+    const credential = await SecureCredentialStore.getInstance().get(source.id)
+    if (credential !== null) {
+      const password = credential.values['password']
+      if (typeof password === 'string') config.password = password
+    }
     return new WebDavProvider(source, new WebDavClient(config))
   }
 
@@ -32,7 +39,7 @@ export class WebDavProvider implements MediaProvider {
 
   hasCapability(capability: ProviderCapability): boolean {
     return capability === ProviderCapability.HOME || capability === ProviderCapability.BROWSE ||
-      capability === ProviderCapability.RESUME || capability === ProviderCapability.PROGRESS_SYNC
+      capability === ProviderCapability.RESUME
   }
 
   async getHome(): Promise<MediaSection[]> {
@@ -65,6 +72,43 @@ export class WebDavProvider implements MediaProvider {
   }
 
   async search(_keyword: string): Promise<MediaItem[]> { return [] }
+
+  async getResumeItems(limit: number = 0): Promise<MediaItem[]> {
+    const records = await new PlaybackHistoryStore().getAll()
+    const result: MediaItem[] = []
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i]
+      if (record.sourceId !== this.source.id) continue
+      if (record.durationMs > 0 && record.positionMs / record.durationMs >= 0.995) continue
+      const item = new MediaItem()
+      item.sourceId = this.source.id
+      item.id = record.mediaId
+      item.title = record.title
+      item.subtitle = record.subtitle
+      item.poster = record.artwork
+      item.positionMs = record.positionMs
+      item.durationMs = record.durationMs
+      item.playable = true
+      result.push(item)
+      if (limit > 0 && result.length >= limit) break
+    }
+    return result
+  }
+
+  async testConnection(): Promise<ProviderHealth> {
+    const health = new ProviderHealth()
+    const started = Date.now()
+    try {
+      await this.client.list('')
+      health.ok = true
+      health.message = 'WebDAV 连接正常'
+    } catch (err) {
+      health.ok = false
+      health.message = err instanceof Error ? err.message : 'WebDAV 连接失败'
+    }
+    health.latencyMs = Math.max(0, Date.now() - started)
+    return health
+  }
   async getItem(itemId: string): Promise<MediaItem | null> {
     const normalizedItemId = WebDavProvider.normalizeText(itemId)
     if (normalizedItemId.length === 0) return null
@@ -110,8 +154,6 @@ export class WebDavProvider implements MediaProvider {
     session.subtitles = await this.findSidecarSubtitles(mediaId)
     return session
   }
-
-  async resolve(item: PlaybackQueueItem): Promise<PlaybackSession> { return this.resolvePlayback(item) }
 
   async refreshQueue(session: PlaybackSession): Promise<PlaybackQueueItem[]> {
     const sessionSourceId = WebDavProvider.normalizeText(session.media.sourceId)
@@ -219,6 +261,10 @@ export class WebDavProvider implements MediaProvider {
       const subtitle = new PlaybackSubtitle()
       subtitle.id = entry.href
       subtitle.displayName = subtitleName
+      const suffix = subtitleBase.length > baseName.length ? subtitleBase.substring(baseName.length + 1) : ''
+      subtitle.language = suffix
+      subtitle.title = suffix.length > 0 ? suffix : subtitleName
+      subtitle.isDefault = suffix.length === 0 || suffix === 'default'
       subtitle.url = this.client.streamUrl(entry.href)
       try {
         subtitle.headers = await this.client.subtitleHeaders(entry.href)

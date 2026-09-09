@@ -4,7 +4,9 @@ export enum ProviderCapability {
   BROWSE = 'browse',
   DETAIL = 'detail',
   RESUME = 'resume',
-  PROGRESS_SYNC = 'progress_sync',
+  REMOTE_PROGRESS_SYNC = 'remote_progress_sync',
   TRANSCODE = 'transcode',
-  MULTI_VERSION = 'multi_version'
+  MULTI_VERSION = 'multi_version',
+  VARIANT = 'variant',
+  ARTWORK = 'artwork'
 }

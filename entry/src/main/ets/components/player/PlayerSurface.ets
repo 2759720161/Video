@@ -3,7 +3,7 @@ import { PlayerEngineFactory } from '../../core/player/PlayerEngineFactory'
 import { Logger } from '../../utils/Logger'
 
 const logger = new Logger('PlayerSurface')
-const PLAYER_LIVE_URL_KEY: string = 'playerLivePlaybackUrl'
+const PLAYER_LIVE_IDENTITY_KEY: string = 'playerLivePlaybackIdentity'
 const PLAYER_LIVE_POSITION_KEY: string = 'playerLivePlaybackPositionMs'
 const RETAINED_PLAYER_SESSION_TIMEOUT_MS: number = 6000
 let playerSurfaceInitSeq: number = 0
@@ -531,7 +531,8 @@ export struct PlayerSurface {
   private createTargetPlaybackOptions(targetUrl: string): PlaybackOptions {
     const options = new PlaybackOptions()
     options.url = targetUrl
-    options.startPositionMs = this.resolveStartPositionMs(targetUrl)
+    options.mediaIdentity = this.playbackOptions.mediaIdentity
+    options.startPositionMs = this.resolveStartPositionMs(targetUrl, options.mediaIdentity)
     options.referer = this.playbackOptions.referer
     options.userAgent = this.playbackOptions.userAgent
     options.proxy = this.playbackOptions.proxy
@@ -553,14 +554,14 @@ export struct PlayerSurface {
     return this.playbackOptions.url.length > 0 ? this.playbackOptions.url : this.videoUrl
   }
 
-  private resolveStartPositionMs(targetUrl: string): number {
+  private resolveStartPositionMs(targetUrl: string, targetIdentity: string): number {
     // `liveStartPositionMs` is a reactive child prop and can briefly retain the
     // outgoing file's value when playbackOptions has already switched URLs.
     // It has no URL identity of its own, so using it here can transfer one
     // episode's progress to another. The AppStorage checkpoint below is URL
     // bound and remains the safe source for fullscreen/component rebuilds.
-    const cachedUrl = AppStorage.get<string>(PLAYER_LIVE_URL_KEY) ?? ''
-    if (cachedUrl === targetUrl) {
+    const cachedIdentity = AppStorage.get<string>(PLAYER_LIVE_IDENTITY_KEY) ?? ''
+    if (targetIdentity.length > 0 && cachedIdentity === targetIdentity) {
       const cachedPosition = AppStorage.get<number>(PLAYER_LIVE_POSITION_KEY) ?? 0
       if (cachedPosition > 0) {
         return cachedPosition

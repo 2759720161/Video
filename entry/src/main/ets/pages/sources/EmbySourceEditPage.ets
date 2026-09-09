@@ -248,8 +248,8 @@ struct EmbySourceEditPage {
       this.serverUrl = config.baseUrl
       this.userName = config.userName
       this.password = ''
-      promptAction.showToast({ message: '已连接 ' + config.serverName })
-      await this.openLibrary(true, sourceId)
+      promptAction.showToast({ message: (config.serverName.length > 0 ? config.serverName : 'Emby') + ' 已添加' })
+      await this.getUIContext().getRouter().back()
     } catch (err) {
       promptAction.showToast({ message: err instanceof Error ? err.message : 'Emby 连接失败' })
     } finally {

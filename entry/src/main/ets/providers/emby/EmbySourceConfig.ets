@@ -1,9 +1,18 @@
 import { EmbyServerConfig } from './EmbyModels'
+import { EmbyStoredConfig } from './EmbyStoredConfig'
 
 /** 负责来源 JSON 与 Emby 私有配置之间的边界转换。 */
 export class EmbySourceConfigCodec {
   static encode(config: EmbyServerConfig): string {
-    return JSON.stringify(config)
+    const stored = new EmbyStoredConfig()
+    stored.baseUrl = config.baseUrl
+    stored.serverId = config.serverId
+    stored.serverName = config.serverName
+    stored.serverVersion = config.serverVersion
+    stored.userId = config.userId
+    stored.userName = config.userName
+    stored.deviceId = config.deviceId
+    return JSON.stringify(stored)
   }
 
   static decode(raw: string): EmbyServerConfig | null {
@@ -32,7 +41,10 @@ export class EmbySourceConfigCodec {
       config.deviceId = EmbySourceConfigCodec.readString(value, 'deviceId').trim()
       if (!/^https?:\/\/[^\s]+$/i.test(config.baseUrl)) return null
       if (!config.baseUrl.toLowerCase().endsWith('/emby')) config.baseUrl += '/emby'
-      return config.isValid() ? config : null
+      // Stored source JSON intentionally omits accessToken. Runtime callers
+      // (EmbyProvider) merge SecureCredentialStore and perform the stricter
+      // EmbyServerConfig.isValid() check after credentials are restored.
+      return EmbySourceConfigCodec.isStoredConfigValid(config) ? config : null
     } catch (_err) {
       return null
     }
@@ -40,5 +52,9 @@ export class EmbySourceConfigCodec {
 
   private static readString(value: Record<string, Object>, key: string): string {
     return typeof value[key] === 'string' ? value[key] as string : ''
+  }
+
+  private static isStoredConfigValid(config: EmbyServerConfig): boolean {
+    return config.baseUrl.length > 0 && config.userId.length > 0
   }
 }

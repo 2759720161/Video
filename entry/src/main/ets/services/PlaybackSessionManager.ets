@@ -61,6 +61,44 @@ export class PlaybackSessionManager {
     return this.reportControllers.get(PlaybackSessionManager.trimString(sessionId)) ?? null
   }
 
+  /** 确保临时播放地址在给定窗口内有效；未过期时直接返回当前会话。 */
+  async ensureFreshStream(sessionId: string, windowMs: number = 30000): Promise<PlaybackSession | null> {
+    const id = PlaybackSessionManager.trimString(sessionId)
+    const current = this.sessions.get(id)
+    const resolver = this.resolvers.get(id)
+    if (current === undefined || resolver === undefined || !current.stream.isExpiringSoon(windowMs)) {
+      return current ?? null
+    }
+    const index = current.queueIndex >= 0 && current.queueIndex < current.queue.length ? current.queueIndex : 0
+    const item = current.queue[index]
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) return current
+    const refreshed = await resolver.resolvePlayback(item)
+    if (refreshed === null || typeof refreshed !== 'object' || Array.isArray(refreshed) ||
+      refreshed.media === null || typeof refreshed.media !== 'object' || Array.isArray(refreshed.media) ||
+      refreshed.stream === null || typeof refreshed.stream !== 'object' || Array.isArray(refreshed.stream)) {
+      throw new Error('Provider 返回的刷新会话无效')
+    }
+    if (PlaybackSessionManager.trimString(refreshed.media.sourceId) !== current.media.sourceId ||
+      PlaybackSessionManager.trimString(refreshed.media.mediaId) !== current.media.mediaId ||
+      PlaybackSessionManager.trimString(refreshed.stream.url).length === 0) {
+      throw new Error('Provider 返回的刷新会话身份不匹配')
+    }
+    refreshed.id = id
+    refreshed.queue = current.queue
+    refreshed.queueIndex = current.queueIndex
+    refreshed.startPositionMs = PlaybackSessionManager.normalizePosition(current.startPositionMs, refreshed.durationMs)
+    this.sessions.set(id, refreshed)
+    const reporter = resolver.createReporterForSession(refreshed)
+    if (reporter === null) {
+      this.reporters.delete(id)
+      this.reportControllers.delete(id)
+    } else {
+      this.reporters.set(id, reporter)
+      this.reportControllers.set(id, new PlaybackReportController(reporter))
+    }
+    return refreshed
+  }
+
   /** 切换队列媒体时替换独立的来源上报器，旧 controller 必须已完成 stopped。 */
   replaceReporter(sessionId: string, reporter: PlaybackReporter | null): void {
     const id = PlaybackSessionManager.trimString(sessionId)
@@ -115,6 +153,7 @@ export class PlaybackSessionManager {
     session.media.title = PlaybackSessionManager.trimString(session.media.title)
     session.media.subtitle = PlaybackSessionManager.trimString(session.media.subtitle)
     session.media.artwork = PlaybackSessionManager.trimString(session.media.artwork)
+    session.media.artworkRef = PlaybackSessionManager.trimString(session.media.artworkRef)
     session.stream.url = PlaybackSessionManager.trimString(session.stream.url)
     if (session.media.sourceId.length === 0 || session.media.mediaId.length === 0) {
       throw new Error('Playback session media identity cannot be empty')
@@ -175,6 +214,7 @@ export class PlaybackSessionManager {
       item.title = PlaybackSessionManager.trimString(item.title)
       item.subtitle = PlaybackSessionManager.trimString(item.subtitle)
       item.artwork = PlaybackSessionManager.trimString(item.artwork)
+      item.artworkRef = PlaybackSessionManager.trimString(item.artworkRef)
       item.variantId = PlaybackSessionManager.trimString(item.variantId)
       seenMediaIds[item.mediaId] = true
       item.durationMs = PlaybackSessionManager.normalizeDuration(item.durationMs)
@@ -192,6 +232,7 @@ export class PlaybackSessionManager {
       current.title = session.media.title
       current.subtitle = session.media.subtitle
       current.artwork = session.media.artwork
+      current.artworkRef = session.media.artworkRef
       current.durationMs = session.durationMs
       current.positionMs = session.startPositionMs
       session.queue.push(current)
@@ -212,6 +253,8 @@ export class PlaybackSessionManager {
       if (subtitle === null || typeof subtitle !== 'object' || Array.isArray(subtitle)) continue
       subtitle.id = PlaybackSessionManager.trimString(subtitle.id)
       subtitle.displayName = PlaybackSessionManager.trimString(subtitle.displayName)
+      subtitle.language = PlaybackSessionManager.trimString(subtitle.language)
+      subtitle.title = PlaybackSessionManager.trimString(subtitle.title)
       subtitle.url = PlaybackSessionManager.trimString(subtitle.url)
       if (subtitle.url.length === 0) continue
       const headers: Record<string, string> = {}

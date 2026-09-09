@@ -4,6 +4,8 @@ import { MediaSourceInstance, createMediaSourceId } from '../../core/media/Media
 import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { WebDavSourceConfig, WebDavSourceConfigCodec } from '../../providers/webdav/WebDavSourceConfig'
 import { WebDavClient } from '../../providers/webdav/WebDavClient'
+import { SecureCredentialStore } from '../../services/security/SecureCredentialStore'
+import { SourceCredential } from '../../services/security/SourceCredential'
 import { buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 
 @Entry
@@ -35,7 +37,7 @@ struct WebDavSourceEditPage {
           this.InputField('服务器地址', this.baseUrl, 'https://example.com/webdav', (value: string) => this.baseUrl = value)
           this.InputField('根路径', this.rootPath, '/', (value: string) => this.rootPath = value)
           this.InputField('用户名', this.userName, '可选', (value: string) => this.userName = value)
-          this.InputField('密码', this.password, '可选', (value: string) => this.password = value)
+          this.InputField('密码', this.password, '留空表示保持现有密码', (value: string) => this.password = value, true)
           Button(this.saving ? '保存中…' : '测试并保存').width('100%').height(48).enabled(!this.saving)
             .backgroundColor($r('app.color.accent_blue')).fontColor($r('app.color.text_on_primary'))
             .onClick(() => this.save())
@@ -47,11 +49,14 @@ struct WebDavSourceEditPage {
   }
 
   @Builder
-  private InputField(label: string, value: string, placeholder: string, onChange: (value: string) => void): void {
+  private InputField(label: string, value: string, placeholder: string, onChange: (value: string) => void,
+    password: boolean = false): void {
     Column({ space: 6 }) {
       Text(label).fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
       TextInput({ text: value, placeholder: placeholder }).width('100%').height(46)
-        .backgroundColor($r('app.color.card_background')).borderRadius(10).onChange(onChange)
+        .backgroundColor($r('app.color.card_background')).borderRadius(10)
+        .type(password ? InputType.Password : InputType.Normal)
+        .showPasswordIcon(password).onChange(onChange)
     }.width('100%')
   }
 
@@ -66,7 +71,8 @@ struct WebDavSourceEditPage {
       if (config !== null) {
         this.baseUrl = config.baseUrl
         this.userName = config.userName
-        this.password = config.password
+        // 不回填真实密码；编辑页只允许用户输入新密码。
+        this.password = ''
         this.rootPath = config.rootPath
       }
     } catch (_err) {
@@ -91,8 +97,14 @@ struct WebDavSourceEditPage {
       if (!WebDavSourceConfigCodec.normalize(config)) {
         throw new Error('服务器地址必须以 http:// 或 https:// 开头')
       }
-      await new WebDavClient(config).list('')
       const existing = normalizedSourceId.length > 0 ? await MediaSourceStore.getById(normalizedSourceId) : null
+      if (config.password.trim().length === 0 && normalizedSourceId.length > 0) {
+        const oldCredential = await SecureCredentialStore.getInstance().get(normalizedSourceId)
+        if (oldCredential !== null && typeof oldCredential.values['password'] === 'string') {
+          config.password = oldCredential.values['password']
+        }
+      }
+      await new WebDavClient(config).list('')
       const source = new MediaSourceInstance()
       source.id = normalizedSourceId.length > 0 ? normalizedSourceId : createMediaSourceId('webdav')
       source.providerType = 'webdav'
@@ -104,6 +116,12 @@ struct WebDavSourceEditPage {
         source.sortOrder = existing.sortOrder
         source.createdAt = existing.createdAt
       }
+      const credential = new SourceCredential()
+      credential.sourceId = source.id
+      credential.providerType = 'webdav'
+      credential.values['password'] = config.password
+      // 凭据先写入独立存储，再落盘不含密码的媒体源配置。
+      await SecureCredentialStore.getInstance().set(credential)
       if (normalizedSourceId.length > 0) await MediaSourceStore.update(source)
       else await MediaSourceStore.add(source)
       promptAction.showToast({ message: 'WebDAV 已保存' })

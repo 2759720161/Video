@@ -3,6 +3,8 @@ import { MediaSourceInstance, createMediaSourceId } from '../core/media/MediaSou
 import { MediaSourceStore } from './MediaSourceStore'
 import { PreferencesStore } from './PreferencesStore'
 import { EmbySourceConfigCodec } from '../providers/emby/EmbySourceConfig'
+import { SecureCredentialStore } from '../services/security/SecureCredentialStore'
+import { SourceCredential } from '../services/security/SourceCredential'
 
 export const PREFS_KEY_SOURCE_MIGRATION_V1: string = 'mediaSourceMigrationV1Done'
 
@@ -45,6 +47,21 @@ export class MediaSourceMigration {
         const sameAddressAccount = existingConfig.baseUrl === normalizedOldConfig.baseUrl &&
           normalizedOldConfig.userId.length > 0 && existingConfig.userId === normalizedOldConfig.userId
         if (sameServerAccount || sameAddressAccount) hasMigratedEmby = true
+        if (sameServerAccount || sameAddressAccount) {
+          const existingCredential = await SecureCredentialStore.getInstance().get(existing[i].id)
+          const existingToken = existingCredential === null ? '' : existingCredential.values['accessToken']
+          if (existingCredential === null || typeof existingToken !== 'string' || existingToken.trim().length === 0) {
+            const credential = new SourceCredential()
+            credential.sourceId = existing[i].id
+            credential.providerType = 'emby'
+            credential.values['accessToken'] = normalizedOldConfig.accessToken
+            await SecureCredentialStore.getInstance().set(credential)
+          }
+          // Existing sources may still carry a V1 token; rewrite after the
+          // secure credential has been confirmed.
+          existing[i].configJson = EmbySourceConfigCodec.encode(existingConfig)
+          await MediaSourceStore.update(existing[i])
+        }
       }
       if (existingConfig === null && invalidEmby === null) {
         invalidEmby = existing[i]
@@ -58,6 +75,13 @@ export class MediaSourceMigration {
       source.name = oldConfig.serverName.length > 0 ? oldConfig.serverName : 'Emby'
       source.enabled = true
       source.sortOrder = source.sortOrder > 0 ? source.sortOrder : 10
+      if (normalizedConfig !== null && normalizedConfig.accessToken.length > 0) {
+        const credential = new SourceCredential()
+        credential.sourceId = source.id
+        credential.providerType = 'emby'
+        credential.values['accessToken'] = normalizedConfig.accessToken
+        await SecureCredentialStore.getInstance().set(credential)
+      }
       // 迁移成功后立即固定规范格式；若旧数据无法通过新边界校验，
       // 仍保留原值，避免升级过程覆盖用户配置。
       source.configJson = normalizedConfig === null ? JSON.stringify(oldConfig) :
@@ -69,6 +93,11 @@ export class MediaSourceMigration {
         source.updatedAt = source.createdAt
         await MediaSourceStore.add(source)
       }
+    }
+    // The old singleton preference is no longer needed once its token has
+    // been copied to a source-scoped secure credential.
+    if (oldConfig !== null && normalizedOldConfig !== null && normalizedOldConfig.accessToken.length > 0) {
+      await EmbyServerStore.clear()
     }
     await prefs.setBoolean(PREFS_KEY_SOURCE_MIGRATION_V1, true)
   }

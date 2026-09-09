@@ -12,6 +12,8 @@ import { LocalPlaybackLauncher } from '../../services/LocalPlaybackLauncher'
 import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
 import { PlaybackHistoryStore } from '../../store/PlaybackHistoryStore'
 import { PlaybackHistoryRecord } from '../../models/PlaybackHistoryRecord'
+import { PlaybackHistoryViewItem } from '../../models/PlaybackHistoryViewItem'
+import { PlaybackHistoryRepository } from '../../services/PlaybackHistoryRepository'
 import { LOCAL_VIDEO_HISTORY_VERSION_KEY } from '../../store/LocalVideoHistoryChangeSignal'
 import { LOCAL_MEDIA_LIBRARY_VERSION_KEY } from '../../store/LocalMediaLibraryChangeSignal'
 import { UserDownloadFolder, UserFolderEntry } from '../../services/UserDownloadFolder'
@@ -35,7 +37,13 @@ import { PreferencesStore } from '../../store/PreferencesStore'
 import { MediaSourceStore, MEDIA_SOURCE_VERSION_KEY } from '../../store/MediaSourceStore'
 import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
+import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
+import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
+import { MediaItem } from '../../core/media/MediaItem'
+import { ProviderCapability } from '../../core/media/ProviderCapabilities'
+import { ProviderHomeSnapshot } from '../../models/ProviderHomeSnapshot'
+import { LibraryHomeCoordinator } from '../../services/library/LibraryHomeCoordinator'
 
 const logger = new Logger('LibraryPage')
 const HOME_HISTORY_LIMIT = 6
@@ -59,7 +67,7 @@ export struct LibraryPage {
   @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onMediaSourceChanged') mediaSourceVersion: number = 0
   @StorageLink(PLAYBACK_HISTORY_VERSION_KEY) @Watch('onPlaybackHistoryChanged') playbackHistoryVersion: number = 0
   @State localHistory: LocalVideoRecord[] = []
-  @State continueWatching: LocalVideoRecord[] = []
+  @State continueWatching: PlaybackHistoryViewItem[] = []
   @State ownFolderVideoCount: number = 0
   @State ownFolderCount: number = 0
   @State rootFolderEntries: UserFolderEntry[] = []
@@ -68,9 +76,12 @@ export struct LibraryPage {
   @State ownFolderScanning: boolean = false
   @State ownFolderScanFailed: boolean = false
   @State private mediaSources: MediaSourceInstance[] = []
+  @State private homeSnapshots: ProviderHomeSnapshot[] = []
   private scroller: Scroller = new Scroller()
   private historyStore: LocalVideoHistoryStore = new LocalVideoHistoryStore()
   private unifiedHistoryStore: PlaybackHistoryStore = new PlaybackHistoryStore()
+  private historyRepository: PlaybackHistoryRepository = new PlaybackHistoryRepository()
+  private homeCoordinator: LibraryHomeCoordinator = new LibraryHomeCoordinator()
   private reloadGeneration: number = 0
   private hasScannedOwnFolder: boolean = false
   private isGeneratingCovers: boolean = false
@@ -191,57 +202,134 @@ export struct LibraryPage {
   @Builder
   private MediaLibraryContent(): void {
     Column({ space: 0 }) {
-      this.MediaSourcesSection()
-      this.LocalMediaSection()
-
       if (this.continueWatching.length > 0 || this.hideContinueWatching) {
         this.ContinueWatchingSection()
       } else {
         this.HomeEmptyState()
       }
+      this.QuickActionsSection()
+      this.MediaSourcesSection()
+      this.LocalMediaSection()
+      this.RemoteHomeSection()
     }
     .width('100%')
   }
 
   @Builder
+  private RemoteHomeSection(): void {
+    if (this.homeSnapshots.length > 0) {
+      Column({ space: 14 }) {
+        ForEach(this.homeSnapshots, (snapshot: ProviderHomeSnapshot) => {
+          ForEach(snapshot.sections, (section: import('../../core/media/MediaSection').MediaSection) => {
+            Column({ space: 8 }) {
+              Row() {
+                Text(snapshot.sourceName.length > 0 ? snapshot.sourceName + ' · ' + section.title : section.title)
+                  .fontSize(18).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+                  .layoutWeight(1)
+                Text('浏览').fontSize(12).fontColor($r('app.color.accent_blue'))
+                  .onClick(() => this.openHomeSection(snapshot.sourceId, section.id, section.title))
+              }.width('100%')
+              Scroll() {
+                Row({ space: 10 }) {
+                  ForEach(section.items.slice(0, 8), (item: MediaItem) => {
+                    this.RemoteHomeItem(item)
+                  }, (item: MediaItem) => 'home_remote_' + item.sourceId + '_' + item.id)
+                }.padding({ right: 24 })
+              }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+                .width('calc(100% + 16vp)').margin({ right: -16 })
+            }.width('100%')
+          }, (section: import('../../core/media/MediaSection').MediaSection) =>
+            'home_remote_section_' + snapshot.sourceId + '_' + section.id)
+        }, (snapshot: ProviderHomeSnapshot) => 'home_remote_source_' + snapshot.sourceId)
+      }.width('100%').margin({ top: 18 })
+    }
+  }
+
+  @Builder
+  private RemoteHomeItem(item: MediaItem): void {
+    Column({ space: 6 }) {
+      Image(item.poster.length > 0 ? item.poster : $r('app.media.ic_placeholder'))
+        .width(132).height(76).objectFit(ImageFit.Cover).borderRadius(10)
+      Text(item.title).fontSize(13).fontColor($r('app.color.text_primary')).maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
+      Text(item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'))
+        .fontSize(11).fontColor($r('app.color.text_secondary')).maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
+    }.width(132).alignItems(HorizontalAlign.Start).onClick(() => this.openHomeItem(item))
+  }
+
+  @Builder
+  private QuickActionsSection(): void {
+    Row({ space: 10 }) {
+      Button('打开视频')
+        .layoutWeight(1)
+        .height(42)
+        .fontSize(14)
+        .fontColor($r('app.color.text_on_primary'))
+        .backgroundColor($r('app.color.accent_blue'))
+        .borderRadius(12)
+        .onClick(() => this.openPlaybackHistoryPage())
+      Button('添加媒体源')
+        .layoutWeight(1)
+        .height(42)
+        .fontSize(14)
+        .fontColor($r('app.color.accent_blue'))
+        .backgroundColor($r('app.color.button_ghost_bg'))
+        .borderRadius(12)
+        .onClick(() => router.pushUrl({ url: 'pages/sources/AddSourcePage' }))
+    }
+    .width('100%')
+    .margin({ top: 14 })
+  }
+
+  @Builder
   private MediaSourcesSection(): void {
     Column({ space: 10 }) {
-      Text('媒体来源').fontSize(20).fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary')).width('100%').margin({ top: 24 })
-      ForEach(this.mediaSources, (source: MediaSourceInstance) => {
-        Row({ space: 12 }) {
-          SymbolGlyph(source.providerType === 'local' ? $r('sys.symbol.folder') :
-            $r('sys.symbol.play_round_rectangle')).fontSize(27).fontColor([$r('app.color.accent_blue')])
-          Column({ space: 3 }) {
-            Text(source.name).fontSize(16).fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
-            Text(this.sourceStatus(source)).fontSize(12).fontColor($r('app.color.text_secondary'))
-          }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-          SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(18).fontColor([$r('app.color.text_secondary')])
-        }.width('100%').padding(14).borderRadius(14)
-          .backgroundColor($r('app.color.card_background'))
-          .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-          .enabled(source.enabled || source.providerType === 'local')
-          .opacity(source.enabled || source.providerType === 'local' ? 1 : 0.55)
-          .onClick(() => this.openSource(source))
-      })
+      Row() {
+        Text('媒体来源').fontSize(20).fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary')).layoutWeight(1).margin({ top: 24 })
+        Text('管理').fontSize(13).fontColor($r('app.color.accent_blue'))
+          .margin({ top: 24 }).onClick(() => router.pushUrl({ url: 'pages/sources/SourceManagerPage' }))
+      }.width('100%')
+      if (this.mediaSources.length > 0) {
+        Scroll() {
+          Row({ space: 10 }) {
+            ForEach(this.mediaSources, (source: MediaSourceInstance) => {
+              Column({ space: 6 }) {
+                SymbolGlyph(source.providerType === 'local' ? $r('sys.symbol.folder') :
+                  $r('sys.symbol.play_round_rectangle')).fontSize(25)
+                  .fontColor([$r('app.color.accent_blue')])
+                Text(source.name).fontSize(14).fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_primary')).maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
+                Text(this.sourceStatus(source)).fontSize(11).fontColor($r('app.color.text_secondary'))
+                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width(132)
+              }.width(150).height(96).padding(12).alignItems(HorizontalAlign.Start)
+                .borderRadius(14).backgroundColor($r('app.color.card_background'))
+                .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+                .enabled(source.enabled || source.providerType === 'local')
+                .opacity(source.enabled || source.providerType === 'local' ? 1 : 0.55)
+                .onClick(() => this.openSource(source))
+            }, (source: MediaSourceInstance) => 'home_source_' + source.id)
+          }.padding({ right: 24 })
+        }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+          .width('calc(100% + 16vp)').margin({ right: -16 })
+      }
     }.width('100%')
   }
 
   private sourceStatus(source: MediaSourceInstance): string {
     if (source.providerType === 'local') return '本机文件夹 · 已启用'
-    return (source.providerType === 'webdav' ? 'WebDAV' : source.providerType) +
+    const descriptor = ProviderCatalog.get(source.providerType)
+    const label = descriptor === null || descriptor.displayName.length === 0 ? source.providerType : descriptor.displayName
+    return label +
       (source.enabled ? ' · 已启用' : ' · 已停用')
   }
 
   private openSource(source: MediaSourceInstance): void {
-    if (source.providerType === 'local') {
-      void this.openFolderPage()
-    } else if (source.providerType === 'emby') {
-      void router.pushUrl({ url: 'pages/emby/EmbyLibraryPage', params: { sourceId: source.id } })
-    } else {
-      void router.pushUrl({ url: 'pages/sources/SourceBrowserPage', params: { sourceId: source.id, parentId: '' } })
-    }
+    const descriptor = ProviderCatalog.get(source.providerType)
+    if (descriptor === null || descriptor.browserRoute.length === 0) return
+    void router.pushUrl({ url: descriptor.browserRoute, params: descriptor.browserParams(source.id) })
   }
 
   @Builder
@@ -271,18 +359,18 @@ export struct LibraryPage {
         this.HiddenCardsHint()
       } else if (this.getHomeHistory().length === 1) {
         Row() {
-          ForEach(this.getHomeHistory(), (record: LocalVideoRecord) => {
+          ForEach(this.getHomeHistory(), (record: PlaybackHistoryViewItem) => {
             this.ContinueWatchingCard(record)
-          }, (record: LocalVideoRecord) => 'home_continue_' + record.id + '_' + record.coverUri + '_' + record.positionMs)
+          }, (record: PlaybackHistoryViewItem) => 'home_continue_' + record.key + '_' + record.artworkRef + '_' + record.positionMs)
         }
         .width('100%')
         .justifyContent(FlexAlign.Start)
       } else {
         Scroll() {
           Row({ space: 12 }) {
-            ForEach(this.getHomeHistory(), (record: LocalVideoRecord) => {
+            ForEach(this.getHomeHistory(), (record: PlaybackHistoryViewItem) => {
               this.ContinueWatchingCard(record)
-            }, (record: LocalVideoRecord) => 'home_continue_' + record.id + '_' + record.coverUri + '_' + record.positionMs)
+            }, (record: PlaybackHistoryViewItem) => 'home_continue_' + record.key + '_' + record.artworkRef + '_' + record.positionMs)
           }
           .padding({ right: 24 })
         }
@@ -297,16 +385,16 @@ export struct LibraryPage {
   }
 
   @Builder
-  private ContinueWatchingCard(record: LocalVideoRecord): void {
+  private ContinueWatchingCard(record: PlaybackHistoryViewItem): void {
     Column({ space: 8 }) {
       Stack({ alignContent: Alignment.BottomStart }) {
-        Image(record.coverUri.length > 0 ? record.coverUri : $r('app.media.ic_placeholder'))
+        Image(record.artworkUrl.length > 0 ? record.artworkUrl : $r('app.media.ic_placeholder'))
           .draggable(false)
           .width(176)
           .height(99)
           .objectFit(ImageFit.Cover)
           .borderRadius(12)
-          .opacity(record.coverUri.length > 0 ? 1 : 0.82)
+          .opacity(record.artworkUrl.length > 0 ? 1 : 0.82)
 
         if (record.durationMs > 0) {
           Progress({
@@ -324,7 +412,7 @@ export struct LibraryPage {
       .width(176)
       .height(99)
 
-      Text(record.fileName)
+      Text(record.title)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -502,11 +590,52 @@ export struct LibraryPage {
     if (generation !== this.reloadGeneration || !this.isActive) return
     this.mediaSources = await MediaSourceStore.getAll()
     if (generation !== this.reloadGeneration || !this.isActive) return
+    void this.loadHomeSnapshots(generation)
     if (this.appRdbReady) {
       await this.loadContinueWatchingHistory(generation)
     }
     if (generation === this.reloadGeneration && this.isActive) {
       this.scanOwnFolderIfNeeded(true)
+    }
+  }
+
+  private async loadHomeSnapshots(generation: number): Promise<void> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext
+      const snapshots = await this.homeCoordinator.load(context)
+      if (generation === this.reloadGeneration && this.isActive) this.homeSnapshots = snapshots
+    } catch (err) {
+      if (generation === this.reloadGeneration) {
+        logger.warn('加载首页来源快照失败: %{public}s', err instanceof Error ? err.message : String(err))
+        this.homeSnapshots = []
+      }
+    }
+  }
+
+  private async openHomeItem(item: MediaItem): Promise<void> {
+    try {
+      if (item.browsable) {
+        const descriptor = ProviderCatalog.get(item.sourceId)
+        if (descriptor === null || descriptor.browserRoute.length === 0) throw new Error('该来源暂不支持浏览')
+        const params = descriptor.browserParams(item.sourceId)
+        params.parentId = item.id
+        await router.pushUrl({ url: descriptor.browserRoute, params: params })
+      } else if (item.playable) {
+        await ProviderPlaybackLauncher.open(this.getUIContext(), item)
+      }
+    } catch (err) {
+      logger.warn('打开首页推荐失败: %{public}s', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  private async openHomeSection(sourceId: string, sectionId: string, sectionTitle: string = ''): Promise<void> {
+    try {
+      const descriptor = ProviderCatalog.get(sourceId)
+      if (descriptor === null || descriptor.browserRoute.length === 0) throw new Error('该来源暂不支持浏览')
+      const params = descriptor.sectionParams(sourceId, sectionId, sectionTitle)
+      await router.pushUrl({ url: descriptor.browserRoute, params: params })
+    } catch (err) {
+      logger.warn('打开首页推荐区失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -553,38 +682,108 @@ export struct LibraryPage {
 
   private async loadContinueWatchingHistory(generation: number = this.reloadGeneration): Promise<void> {
     try {
-      const merged: LocalVideoRecord[] = [...this.localHistory]
+      const merged: PlaybackHistoryViewItem[] = []
+      for (let i = 0; i < this.localHistory.length; i++) {
+        const localItem = this.toHistoryViewItemFromLocal(this.localHistory[i])
+        if (!localItem.completed) merged.push(localItem)
+      }
       const enabledSources: Record<string, boolean> = {}
       for (let i = 0; i < this.mediaSources.length; i++) {
         enabledSources[this.mediaSources[i].id] = this.mediaSources[i].enabled
+      }
+      const serverSourceIds: Record<string, boolean> = {}
+      const context = getContext(this) as common.UIAbilityContext
+      for (let i = 0; i < this.mediaSources.length; i++) {
+        const source = this.mediaSources[i]
+        if (source.providerType === 'local' || source.enabled !== true) continue
+        try {
+          const provider = await ProviderRegistry.get(source.id, context, true)
+          if (provider === null || !provider.hasCapability(ProviderCapability.RESUME)) continue
+          const items = await provider.getResumeItems(HOME_HISTORY_LIMIT)
+          for (let j = 0; j < items.length; j++) {
+            const item = items[j]
+            if (item === null || typeof item !== 'object' || Array.isArray(item) ||
+              item.playable !== true || item.id.trim().length === 0) continue
+            const viewItem = this.toHistoryViewItemFromMedia(item)
+            if (!viewItem.completed) merged.push(viewItem)
+          }
+          serverSourceIds[source.id] = true
+        } catch (err) {
+          logger.warn('读取来源续播失败，回退本地缓存: source=%{public}s error=%{public}s',
+            source.id, err instanceof Error ? err.message : String(err))
+        }
       }
       const unified = await this.unifiedHistoryStore.getAll()
       for (let i = 0; i < unified.length; i++) {
         const record = unified[i]
         if (record.sourceId === 'local' || enabledSources[record.sourceId] !== true) continue
-        merged.push(this.toDisplayRecord(record))
+        if (serverSourceIds[record.sourceId] === true) continue
+        if (record.durationMs > 0 && record.positionMs / record.durationMs >= 0.995) continue
+        const viewItem = this.toHistoryViewItemFromRecord(record)
+        if (!viewItem.completed) merged.push(viewItem)
       }
-      merged.sort((left: LocalVideoRecord, right: LocalVideoRecord) => right.lastPlayedAt - left.lastPlayedAt)
+      merged.sort((left: PlaybackHistoryViewItem, right: PlaybackHistoryViewItem) => right.lastPlayedAt - left.lastPlayedAt)
+      await this.historyRepository.resolveArtwork(merged, context)
       if (generation !== this.reloadGeneration) return
       this.continueWatching = merged
     } catch (err) {
       if (generation !== this.reloadGeneration) return
       logger.warn('加载统一继续观看记录失败: %{public}s', err instanceof Error ? err.message : String(err))
-      this.continueWatching = [...this.localHistory]
+      const fallback: PlaybackHistoryViewItem[] = []
+      for (let i = 0; i < this.localHistory.length; i++) {
+        const item = this.toHistoryViewItemFromLocal(this.localHistory[i])
+        if (!item.completed) fallback.push(item)
+      }
+      this.continueWatching = fallback
     }
   }
 
-  private toDisplayRecord(record: PlaybackHistoryRecord): LocalVideoRecord {
-    const display = new LocalVideoRecord()
-    display.id = -record.id - 2
-    display.sourceId = record.sourceId
-    display.fileKey = record.mediaId
-    display.fileName = record.title.length > 0 ? record.title : record.mediaId
-    display.coverUri = record.artwork
-    display.positionMs = record.positionMs
-    display.durationMs = record.durationMs
-    display.lastPlayedAt = record.lastPlayedAt
-    return display
+  private toHistoryViewItemFromLocal(record: LocalVideoRecord): PlaybackHistoryViewItem {
+    const item = new PlaybackHistoryViewItem()
+    item.sourceId = 'local'
+    item.mediaId = record.fileKey.length > 0 ? record.fileKey : record.fileUri
+    item.key = item.mediaId.length > 0 ? 'local:' + item.mediaId : ''
+    item.title = record.fileName
+    item.artworkRef = record.coverUri
+    item.artworkUrl = record.coverUri
+    item.positionMs = record.positionMs
+    item.durationMs = record.durationMs
+    item.lastPlayedAt = record.lastPlayedAt
+    item.completed = this.isCompleted(item)
+    return item
+  }
+
+  private toHistoryViewItemFromRecord(record: PlaybackHistoryRecord): PlaybackHistoryViewItem {
+    const item = new PlaybackHistoryViewItem()
+    item.sourceId = record.sourceId
+    item.mediaId = record.mediaId
+    item.key = item.sourceId.length > 0 && item.mediaId.length > 0 ? item.sourceId + ':' + item.mediaId : ''
+    item.title = record.title.length > 0 ? record.title : record.mediaId
+    item.subtitle = record.subtitle
+    item.artworkRef = record.artworkRef.length > 0 ? record.artworkRef : record.artwork
+    item.artworkUrl = ''
+    item.positionMs = record.positionMs
+    item.durationMs = record.durationMs
+    item.lastPlayedAt = record.lastPlayedAt
+    item.remoteRecordId = record.id
+    item.completed = this.isCompleted(item)
+    return item
+  }
+
+  private toHistoryViewItemFromMedia(record: MediaItem): PlaybackHistoryViewItem {
+    const item = new PlaybackHistoryViewItem()
+    item.sourceId = record.sourceId
+    item.mediaId = record.id
+    item.key = item.sourceId.length > 0 && item.mediaId.length > 0 ? item.sourceId + ':' + item.mediaId : ''
+    item.title = record.title.length > 0 ? record.title : record.id
+    item.subtitle = record.subtitle
+    item.artworkRef = record.artworkRef.length > 0 ? record.artworkRef : record.poster
+    item.artworkUrl = record.poster
+    item.positionMs = record.positionMs
+    item.durationMs = record.durationMs
+    item.lastPlayedAt = Date.now()
+    item.completed = this.isCompleted(item)
+    return item
   }
 
   private async scanOwnFolderIfNeeded(force: boolean = false): Promise<void> {
@@ -735,7 +934,8 @@ export struct LibraryPage {
 
   private buildRootFolderEntryStatus(entry: UserFolderEntry): string {
     if (!entry.isDirectory) {
-      return entry.video.durationMs > 0 ? this.watchSummary(entry.video) : '本地视频'
+      const item = this.toHistoryViewItemFromLocal(entry.video)
+      return entry.video.durationMs > 0 ? this.watchSummary(item) : '本地视频'
     }
     const parts: string[] = []
     if (entry.childVideoCount > 0) {
@@ -759,7 +959,7 @@ export struct LibraryPage {
       router.pushUrl({ url: 'pages/local/FolderPage', params: { relativePath: entry.relativePath } })
       return
     }
-    this.openHistoryRecord(entry.video, this.getRootFolderVideoQueue())
+    this.openHistoryRecord(this.toHistoryViewItemFromLocal(entry.video), this.getRootFolderVideoQueue())
   }
 
   /** Keep the home media library interaction aligned with FolderPage. */
@@ -897,28 +1097,29 @@ export struct LibraryPage {
     router.pushUrl({ url: 'pages/local/ContinueWatchingPage' })
   }
 
-  private async openHistoryRecord(record: LocalVideoRecord, queue: LocalVideoRecord[] = this.localHistory): Promise<void> {
-    if (record.sourceId !== 'local') {
+  private async openHistoryRecord(item: PlaybackHistoryViewItem, queue: LocalVideoRecord[] = this.localHistory): Promise<void> {
+    if (item.sourceId !== 'local') {
       try {
-        await ProviderPlaybackLauncher.openById(this.getUIContext(), record.sourceId, record.fileKey,
-          record.positionMs)
+        await ProviderPlaybackLauncher.openById(this.getUIContext(), item.sourceId, item.mediaId,
+          item.positionMs)
       } catch (err) {
         logger.warn('打开远程继续观看记录失败: %{public}s', err instanceof Error ? err.message : String(err))
       }
       return
     }
-    await LocalPlaybackLauncher.open(this.getUIContext(), record, queue)
+    const localRecord = this.findLocalRecord(item.mediaId)
+    if (localRecord !== null) await LocalPlaybackLauncher.open(this.getUIContext(), localRecord, queue)
   }
 
-  private getHomeHistory(): LocalVideoRecord[] {
-    const result: LocalVideoRecord[] = []
+  private getHomeHistory(): PlaybackHistoryViewItem[] {
+    const result: PlaybackHistoryViewItem[] = []
     for (let i = 0; i < this.continueWatching.length && result.length < HOME_HISTORY_LIMIT; i++) {
       result.push(this.continueWatching[i])
     }
     return result
   }
 
-  private watchSummary(record: LocalVideoRecord): string {
+  private watchSummary(record: PlaybackHistoryViewItem): string {
     if (this.isCompleted(record)) {
       return '已播放完'
     }
@@ -930,8 +1131,17 @@ export struct LibraryPage {
     return minutes > 0 ? '剩余 ' + minutes + ' 分钟' : '即将播放完'
   }
 
-  private isCompleted(record: LocalVideoRecord): boolean {
-    return record.durationMs > 0 && record.positionMs / record.durationMs >= 0.995
+  private isCompleted(record: PlaybackHistoryViewItem): boolean {
+    return record.completed || (record.durationMs > 0 && record.positionMs / record.durationMs >= 0.995)
+  }
+
+  private findLocalRecord(mediaId: string): LocalVideoRecord | null {
+    for (let i = 0; i < this.localHistory.length; i++) {
+      const record = this.localHistory[i]
+      const key = record.fileKey.length > 0 ? record.fileKey : record.fileUri
+      if (key === mediaId) return record
+    }
+    return null
   }
 
   private buildOwnFolderStatusText(): string {

@@ -32,7 +32,7 @@ export class LocalPlaybackResolver implements PlaybackResolver {
     return item
   }
 
-  async resolve(item: PlaybackQueueItem): Promise<PlaybackSession> {
+  async resolvePlayback(item: PlaybackQueueItem): Promise<PlaybackSession> {
     const sourceId = LocalPlaybackResolver.normalizeText(item.sourceId)
     const mediaId = LocalPlaybackResolver.normalizeText(item.mediaId)
     const record = this.records.get(mediaId)

@@ -12,6 +12,7 @@ import { LocalPlaybackReporter } from './LocalPlaybackReporter'
 import { LocalPlaybackIdentity } from './LocalPlaybackIdentity'
 import { UserDownloadFolder, UserFolderEntry } from '../../services/UserDownloadFolder'
 import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
+import { ProviderHealth } from '../../core/media/ProviderHealth'
 
 /** 迁移期 Local Provider：复用现有本地文件与权限服务。 */
 export class LocalProvider implements MediaProvider {
@@ -29,7 +30,7 @@ export class LocalProvider implements MediaProvider {
 
   hasCapability(capability: ProviderCapability): boolean {
     return capability === ProviderCapability.HOME || capability === ProviderCapability.BROWSE ||
-      capability === ProviderCapability.RESUME || capability === ProviderCapability.PROGRESS_SYNC
+      capability === ProviderCapability.RESUME || capability === ProviderCapability.ARTWORK
   }
 
   async getHome(): Promise<MediaSection[]> {
@@ -60,6 +61,26 @@ export class LocalProvider implements MediaProvider {
 
   async search(_keyword: string): Promise<MediaItem[]> { return [] }
 
+  async getResumeItems(limit: number = 0): Promise<MediaItem[]> {
+    const records = await this.historyStore.getAll()
+    const result: MediaItem[] = []
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i]
+      if (record.durationMs > 0 && record.positionMs / record.durationMs >= 0.995) continue
+      this.cacheRecord(record)
+      result.push(this.toVideoItem(record))
+      if (limit > 0 && result.length >= limit) break
+    }
+    return result
+  }
+
+  async testConnection(): Promise<ProviderHealth> {
+    const health = new ProviderHealth()
+    health.ok = true
+    health.message = '本地文件可用'
+    return health
+  }
+
   async getItem(itemId: string): Promise<MediaItem | null> {
     const record = await this.findRecord(itemId)
     return record === null ? null : this.toVideoItem(record)
@@ -79,11 +100,7 @@ export class LocalProvider implements MediaProvider {
     this.cacheRecord(record)
     this.resolver.remember(record)
     if (item.startFromBeginning) item.positionMs = 0
-    return this.resolver.resolve(item)
-  }
-
-  async resolve(item: PlaybackQueueItem): Promise<PlaybackSession> {
-    return this.resolvePlayback(item)
+    return this.resolver.resolvePlayback(item)
   }
 
   async refreshQueue(session: PlaybackSession): Promise<PlaybackQueueItem[]> {

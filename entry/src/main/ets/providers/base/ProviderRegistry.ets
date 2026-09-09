@@ -8,7 +8,7 @@ import { WebDavProvider } from '../webdav/WebDavProvider'
 import { Logger } from '../../utils/Logger'
 
 export type MediaProviderFactory = (source: MediaSourceInstance,
-  context: common.UIAbilityContext | null) => MediaProvider | null
+  context: common.UIAbilityContext | null) => Promise<MediaProvider | null>
 
 /** 以 sourceId 查找来源实例并创建 Provider，支持同类型多实例。 */
 export class ProviderRegistry {
@@ -34,7 +34,7 @@ export class ProviderRegistry {
     const factory = ProviderRegistry.factories.get(source.providerType)
     if (factory === undefined) return null
     try {
-      return factory(source, context)
+      return await factory(source, context)
     } catch (err) {
       ProviderRegistry.logger.warn('Create provider failed: source=%{public}s type=%{public}s error=%{public}s',
         source.id, source.providerType, err instanceof Error ? err.message : String(err))
@@ -43,10 +43,10 @@ export class ProviderRegistry {
   }
 
   static registerBuiltIns(): void {
-    ProviderRegistry.register('local', (_source, context) =>
+    ProviderRegistry.register('local', async (_source, context) =>
       context === null ? null : new LocalProvider(context))
-    ProviderRegistry.register('emby', (source, _context) => EmbyProvider.fromSource(source))
-    ProviderRegistry.register('webdav', (source, _context) => WebDavProvider.fromSource(source))
+    ProviderRegistry.register('emby', async (source, _context) => EmbyProvider.fromSource(source))
+    ProviderRegistry.register('webdav', async (source, _context) => WebDavProvider.fromSource(source))
   }
 
   static supports(providerType: string): boolean {

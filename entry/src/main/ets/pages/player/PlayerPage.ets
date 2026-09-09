@@ -7,20 +7,21 @@ import { DanmakuManager } from '../../core/danmaku/DanmakuManager'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { DanmakuFileParser, LocalDanmakuParseResult } from '../../core/danmaku/DanmakuFileParser'
 import { LocalFilePicker, LocalFileResult } from '../../services/LocalFilePicker'
-import { LocalVideoThumbnailStore } from '../../services/LocalVideoThumbnailStore'
 import { DanmakuSettingsPanelContent } from '../../components/player/DanmakuSettingsPanel'
 import { DanmakuSettingsSidePanel } from '../../components/player/DanmakuSettingsSidePanel'
 import { AspectModePanel } from '../../components/player/AspectModePanel'
-import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
-import { LocalVideoRecord } from '../../models/LocalVideoRecord'
 import { PlaybackQueueItem } from '../../core/playback/PlaybackQueueItem'
+import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 import { PlaybackSession } from '../../core/playback/PlaybackSession'
 import { PlaybackSubtitle } from '../../core/playback/PlaybackSubtitle'
 import { PlaybackOptionsAdapter } from '../../core/playback/PlaybackOptionsAdapter'
 import { PlaybackPosition } from '../../core/playback/PlaybackPosition'
 import { PlaybackSessionManager } from '../../services/PlaybackSessionManager'
+import { PlaybackLaunchDescriptor } from '../../models/PlaybackLaunchDescriptor'
+import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
+import { ProviderPlaybackResolver } from '../../core/playback/ProviderPlaybackResolver'
 import { PLAYER_PLAYBACK_OWNER_ID } from '../../core/playback/PlaybackOwnerIds'
-import { LocalPlaybackLauncher } from '../../services/LocalPlaybackLauncher'
+import { LocalHistoryUpdate, LocalPlayerExtension } from '../../providers/local/LocalPlayerExtension'
 import { DanmakuItem } from '../../models/DanmakuItem'
 import { PreferencesStore } from '../../store/PreferencesStore'
 import { Logger } from '../../utils/Logger'
@@ -77,7 +78,7 @@ const HISTORY_SAVE_INTERVAL_MS: number = 5000
 const EXTERNAL_SUBTITLE_TICK_MS: number = 100
 const REMOTE_SUBTITLE_MAX_BYTES: number = 20 * 1024 * 1024
 const SUBTITLE_MENU_COMMIT_DELAY_MS: number = 20
-const PLAYER_LIVE_URL_KEY: string = 'playerLivePlaybackUrl'
+const PLAYER_LIVE_IDENTITY_KEY: string = 'playerLivePlaybackIdentity'
 const PLAYER_LIVE_POSITION_KEY: string = 'playerLivePlaybackPositionMs'
 const PLAYER_REBUILD_RESUME_GUARD_MS: number = 3000
 const PREFS_KEY_PLAYER_PAGE_BRIGHTNESS: string = 'playerPageBrightness'
@@ -138,6 +139,7 @@ struct PlayerPage {
   @State isDanmakuEnabled: boolean = true
   @State showSpeedMenu: boolean = false
   @State showMediaInfoSheet: boolean = false
+  @State showVariantSheet: boolean = false
   @State showAudioTrackSheet: boolean = false
   @State showSubtitleTrackSheet: boolean = false
   @State subtitleMenuSection: string = 'primary'
@@ -209,7 +211,7 @@ struct PlayerPage {
   private queueResolveToken: number = 0
   private handedToTypeNodePiP: boolean = false
   private pageVisible: boolean = false
-  private localVideoHistoryStore: LocalVideoHistoryStore = new LocalVideoHistoryStore()
+  private localPlayerExtension: LocalPlayerExtension = new LocalPlayerExtension()
   private readonly FULLSCREEN_ROTATION_SETTLE_MS: number = 180
   private isPageAlive: boolean = false
   private pipManager: PiPManager = PiPManager.getInstance()
@@ -229,11 +231,14 @@ struct PlayerPage {
   private tracksLoadedForUrl: string = ''
   private videoInfoLoadedForUrl: string = ''
   private completionHandledForUrl: string = ''
+  private streamRefreshInFlight: Promise<void> | null = null
+  private streamRefreshFailureKey: string = ''
+  private streamRefreshFailureShown: boolean = false
   @State isAnimatingFullscreen: boolean = false
   @State suppressControlAnimation: boolean = false
   @State hideBottomControlsForFullscreenTransition: boolean = false
 
-  aboutToAppear(): void {
+  async aboutToAppear(): Promise<void> {
     this.isPageAlive = true
     this.pageVisible = true
     const rawParams = router.getParams()
@@ -243,6 +248,16 @@ struct PlayerPage {
     }
     this.session = this.sessionManager.get(this.sessionId)
     if (this.session === null) {
+      const descriptor = this.parseLaunchDescriptor(rawParams as Record<string, Object>)
+      if (descriptor !== null) {
+        const restored = await this.restoreSession(descriptor)
+        if (restored !== null) {
+          this.sessionId = restored.id
+          this.session = restored
+        }
+      }
+    }
+    if (this.session === null) {
       this.playbackErrorText = '播放会话已失效，请重新打开视频'
       this.pageVisible = false
       this.isPageAlive = false
@@ -250,6 +265,7 @@ struct PlayerPage {
       return
     }
     this.applySession(this.session)
+    await this.refreshExpiringStream()
     this.syncKeepScreenOnWithPlayback()
     AppStorage.setOrCreate('playerPageActive', true)
     this.pipManager.setCallbacks(this.buildPiPCallbacks())
@@ -274,7 +290,9 @@ struct PlayerPage {
     if (this.videoUri.length > 0) {
       this.ensurePlaybackQueueForCurrentVideo()
       void this.refreshPlaybackQueue()
-      const options = PlaybackOptionsAdapter.fromStream(this.session!.stream, this.historySeekMs)
+      const options = this.withPlaybackIdentity(
+        PlaybackOptionsAdapter.fromStream(this.session!.stream, this.historySeekMs)
+      )
       if (this.historySeekMs > 0) {
         options.startPositionMs = this.historySeekMs
         this.historySeekMs = -1
@@ -374,6 +392,7 @@ struct PlayerPage {
   private onAppForegroundChanged(): void {
     if (this.appInForeground) {
       this.syncKeepScreenOnWithPlayback()
+      void this.refreshExpiringStream()
       return
     }
     this.setKeepScreenOn(false)
@@ -468,6 +487,7 @@ struct PlayerPage {
   }
 
   private async startTypeNodePiPForLeaving(): Promise<boolean> {
+    await this.refreshExpiringStream()
     const route = new TypeNodePiPRoute()
     route.url = 'pages/player/PlayerPage'
     route.params = this.buildPlayerRouteParams()
@@ -495,7 +515,58 @@ struct PlayerPage {
   private buildPlayerRouteParams(): Record<string, Object> {
     this.syncActiveSession()
     const params: Record<string, Object> = { 'sessionId': this.sessionId }
+    if (this.session !== null) {
+      params['sourceId'] = this.session.media.sourceId
+      params['mediaId'] = this.session.media.mediaId
+      params['variantId'] = this.currentQueueItem() === null ? '' : this.currentQueueItem()!.variantId
+      params['positionMs'] = this.positionMs
+    }
     return params
+  }
+
+  private parseLaunchDescriptor(params: Record<string, Object>): PlaybackLaunchDescriptor | null {
+    const descriptor = new PlaybackLaunchDescriptor()
+    descriptor.sourceId = typeof params['sourceId'] === 'string' ? (params['sourceId'] as string).trim() : ''
+    descriptor.mediaId = typeof params['mediaId'] === 'string' ? (params['mediaId'] as string).trim() : ''
+    descriptor.variantId = typeof params['variantId'] === 'string' ? (params['variantId'] as string).trim() : ''
+    const position = params['positionMs']
+    descriptor.positionMs = typeof position === 'number' && Number.isFinite(position) ? Math.max(0, Math.floor(position)) : 0
+    return descriptor.sourceId.length > 0 && descriptor.mediaId.length > 0 ? descriptor : null
+  }
+
+  private async restoreSession(descriptor: PlaybackLaunchDescriptor): Promise<PlaybackSession | null> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext
+      const provider = await ProviderRegistry.get(descriptor.sourceId, context)
+      if (provider === null) return null
+      const item = await provider.getItem(descriptor.mediaId)
+      if (item === null || !item.playable) return null
+      item.variantId = descriptor.variantId
+      item.positionMs = descriptor.positionMs
+      const queueItem = new PlaybackQueueItem()
+      queueItem.sourceId = item.sourceId
+      queueItem.mediaId = item.id
+      queueItem.title = item.title
+      queueItem.subtitle = item.subtitle
+      queueItem.artwork = item.poster
+      queueItem.artworkRef = item.artworkRef
+      queueItem.durationMs = PlaybackQueueItem.normalizeDurationMs(item.durationMs)
+      queueItem.positionMs = PlaybackQueueItem.normalizePositionMs(item.positionMs)
+      queueItem.variantId = item.variantId
+      queueItem.variants = item.variants
+      const session = await provider.resolvePlayback(queueItem)
+      session.queue = [queueItem]
+      session.queueIndex = 0
+      const manager = this.sessionManager
+      const reporter = provider.createReporterForSession(session)
+      const sessionId = manager.create(session, reporter === null ? undefined : reporter,
+        new ProviderPlaybackResolver(provider))
+      session.id = sessionId
+      return session
+    } catch (err) {
+      logger.warn('恢复播放会话失败: %{public}s', err instanceof Error ? err.message : String(err))
+      return null
+    }
   }
 
   private applySession(session: PlaybackSession): void {
@@ -539,10 +610,54 @@ struct PlayerPage {
     this.sessionManager.update(this.session)
   }
 
+  /** 临时直链在进入页面或回到前台时提前刷新，避免播放器拿到已过期 URL。 */
+  private async refreshExpiringStream(): Promise<void> {
+    if (this.streamRefreshInFlight !== null) {
+      await this.streamRefreshInFlight
+      return
+    }
+    const task = this.refreshExpiringStreamInternal()
+    this.streamRefreshInFlight = task
+    try {
+      await task
+    } finally {
+      if (this.streamRefreshInFlight === task) this.streamRefreshInFlight = null
+    }
+  }
+
+  private async refreshExpiringStreamInternal(): Promise<void> {
+    const current = this.session
+    if (!this.isPageAlive || current === null) return
+    current.startPositionMs = PlaybackQueueItem.normalizePositionMs(this.positionMs)
+    const failureKey = current.media.sourceId + '|' + current.media.mediaId + '|' + current.stream.expiresAt
+    if (this.streamRefreshFailureKey === failureKey) return
+    try {
+      const refreshed = await this.sessionManager.ensureFreshStream(this.sessionId, 30000)
+      if (refreshed === null || refreshed === current || !this.isPageAlive || this.session !== current) return
+      this.applySession(refreshed)
+      this.playbackOptions = this.withPlaybackIdentity(
+        PlaybackOptionsAdapter.fromStream(refreshed.stream, refreshed.startPositionMs)
+      )
+      this.syncPlaybackSessionMedia()
+      this.streamRefreshFailureKey = ''
+      this.streamRefreshFailureShown = false
+      logger.info('临时播放地址已刷新: source=%{public}s media=%{public}s',
+        refreshed.media.sourceId, refreshed.media.mediaId)
+    } catch (err) {
+      this.streamRefreshFailureKey = failureKey
+      if (!this.streamRefreshFailureShown) {
+        this.streamRefreshFailureShown = true
+        this.showHudText('播放地址刷新失败，请重试')
+      }
+      logger.warn('刷新临时播放地址失败: %{public}s', err instanceof Error ? err.message : String(err))
+    }
+  }
+
   private cloneCurrentPlaybackOptions(): PlaybackOptions {
     const cloned = new PlaybackOptions()
     cloned.url = this.playbackOptions.url.length > 0 ? this.playbackOptions.url : this.videoUri
     cloned.startPositionMs = this.playbackOptions.startPositionMs
+    cloned.mediaIdentity = this.playbackOptions.mediaIdentity
     cloned.referer = this.playbackOptions.referer
     cloned.userAgent = this.playbackOptions.userAgent
     cloned.proxy = this.playbackOptions.proxy
@@ -629,6 +744,16 @@ struct PlayerPage {
       onAppear: () => this.pauseAutoHideTimer(),
       onDisappear: () => {
         this.showMediaInfoSheet = false
+        this.startAutoHideTimer()
+      }
+    })
+    .bindSheet($$this.showVariantSheet, this.VariantSheet, {
+      height: 300,
+      showClose: false,
+      dragBar: true,
+      onAppear: () => this.pauseAutoHideTimer(),
+      onDisappear: () => {
+        this.showVariantSheet = false
         this.startAutoHideTimer()
       }
     })
@@ -1015,6 +1140,9 @@ struct PlayerPage {
       Row({ space: 2 }) {
         this.SubtitleToolButton()
         this.AudioTrackToolButton()
+        if (this.hasPlaybackVariants()) {
+          this.VariantToolButton()
+        }
       }
     }
     .width('100%')
@@ -1059,6 +1187,25 @@ struct PlayerPage {
         return
       }
       this.openTrackSheet(PlayerTrackType.audio)
+    })
+  }
+
+  @Builder
+  private VariantToolButton(): void {
+    Row() {
+      SymbolGlyph($r('sys.symbol.list_bullet'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    }
+    .width(36)
+    .height(30)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(15)
+    .onClick(() => {
+      if (!this.isPlayerControlActionAllowed()) return
+      this.showVariantSheet = true
+      this.pauseAutoHideTimer()
     })
   }
 
@@ -1425,6 +1572,67 @@ struct PlayerPage {
     .padding({ top: 9, bottom: 9 })
     .border({ width: { bottom: 0.5 }, color: $r('app.color.divider_color') })
     .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private VariantSheet(): void {
+    Column() {
+      Text('播放版本')
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ top: 18, bottom: 12 })
+      if (!this.hasPlaybackVariants()) {
+        Text('当前媒体没有可切换的播放版本')
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ top: 24, bottom: 24 })
+      } else {
+        Scroll() {
+          Column({ space: 4 }) {
+            ForEach(this.currentPlaybackVariants(), (variant: PlaybackVariant) => {
+              this.VariantChoiceRow(variant)
+            }, (variant: PlaybackVariant) => 'variant_' + variant.id)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height(210)
+        .scrollBar(BarState.Off)
+      }
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, bottom: 18 })
+  }
+
+  @Builder
+  private VariantChoiceRow(variant: PlaybackVariant): void {
+    Row({ space: 12 }) {
+      Column() {
+        Text(variant.name.length > 0 ? variant.name : variant.id)
+          .fontSize(15)
+          .fontWeight(this.isVariantSelected(variant.id) ? FontWeight.Bold : FontWeight.Medium)
+          .fontColor(this.isVariantSelected(variant.id) ? $r('app.color.accent_blue') : $r('app.color.text_primary'))
+        if (variant.quality.length > 0) {
+          Text(variant.quality).fontSize(12).fontColor($r('app.color.text_secondary')).margin({ top: 2 })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      if (this.isVariantSelected(variant.id)) {
+        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18).fontColor([$r('app.color.accent_blue')])
+      }
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(12)
+    .backgroundColor(this.isVariantSelected(variant.id) ? $r('app.color.button_ghost_bg') : Color.Transparent)
+    .onClick(() => this.selectPlaybackVariant(variant.id))
   }
 
   @Builder
@@ -2163,6 +2371,40 @@ struct PlayerPage {
 
   private isCurrentQueueItem(index: number): boolean {
     return index === this.currentQueueIndex
+  }
+
+  private currentQueueItem(): PlaybackQueueItem | null {
+    if (this.currentQueueIndex < 0 || this.currentQueueIndex >= this.playbackQueue.length) return null
+    return this.playbackQueue[this.currentQueueIndex]
+  }
+
+  private currentPlaybackVariants(): PlaybackVariant[] {
+    const item = this.currentQueueItem()
+    return item === null ? [] : item.variants
+  }
+
+  private hasPlaybackVariants(): boolean {
+    return this.currentPlaybackVariants().length > 1
+  }
+
+  private isVariantSelected(variantId: string): boolean {
+    const item = this.currentQueueItem()
+    return item !== null && item.variantId === variantId
+  }
+
+  private async selectPlaybackVariant(variantId: string): Promise<void> {
+    if (!this.isPlayerControlActionAllowed()) return
+    const item = this.currentQueueItem()
+    const normalizedId = variantId.trim()
+    if (item === null || normalizedId.length === 0 || item.variantId === normalizedId) {
+      this.showVariantSheet = false
+      return
+    }
+    item.positionMs = PlaybackQueueItem.normalizePositionMs(this.positionMs)
+    item.startFromBeginning = false
+    item.variantId = normalizedId
+    this.showVariantSheet = false
+    await this.playQueueItem(this.currentQueueIndex, false)
   }
 
   @Builder
@@ -3557,17 +3799,34 @@ struct PlayerPage {
   }
 
   private cacheLivePlaybackPosition(positionMs: number): void {
-    const targetUrl = this.playbackOptions.url.length > 0 ? this.playbackOptions.url : this.videoUri
-    if (targetUrl.length === 0 || positionMs <= 0) {
+    const identity = this.currentPlaybackIdentity()
+    if (identity.length === 0 || positionMs <= 0) {
       return
     }
-    AppStorage.setOrCreate(PLAYER_LIVE_URL_KEY, targetUrl)
+    AppStorage.setOrCreate(PLAYER_LIVE_IDENTITY_KEY, identity)
     AppStorage.setOrCreate(PLAYER_LIVE_POSITION_KEY, positionMs)
   }
 
   private clearLivePlaybackPosition(): void {
     this.liveStartPositionMs = 0
+    AppStorage.setOrCreate(PLAYER_LIVE_IDENTITY_KEY, '')
     AppStorage.setOrCreate(PLAYER_LIVE_POSITION_KEY, 0)
+  }
+
+  private currentPlaybackIdentity(): string {
+    if (this.session !== null) {
+      const sourceId = this.session.media.sourceId.trim()
+      const mediaId = this.session.media.mediaId.trim()
+      if (sourceId.length > 0 && mediaId.length > 0) {
+        return sourceId + ':' + mediaId
+      }
+    }
+    return this.playbackOptions.mediaIdentity.trim()
+  }
+
+  private withPlaybackIdentity(options: PlaybackOptions): PlaybackOptions {
+    options.mediaIdentity = this.currentPlaybackIdentity()
+    return options
   }
 
   private shouldSyncPlaybackSessionState(state: PlayerState): boolean {
@@ -3776,6 +4035,7 @@ struct PlayerPage {
     if (this.pipManager.isActive() || this.pipManager.isCreating()) {
       return true
     }
+    await this.refreshExpiringStream()
     if (this.xComponentController === null) {
       logger.warn('PiP: XComponentController not available')
       return false
@@ -4287,18 +4547,9 @@ struct PlayerPage {
 
   private async pickVideoFile(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext
-      const videoResult = await LocalFilePicker.pickVideoFile(context)
-      if (videoResult === null) {
-        return
-      }
       if (!this.isPageAlive) return
-      const record = new LocalVideoRecord()
-      record.fileUri = videoResult.uri
-      record.fileName = videoResult.fileName
-      record.fileSize = videoResult.fileSize
-      await LocalPlaybackLauncher.open(this.getUIContext(), record, [record], true, true)
-      logger.info('选择本地视频: %{public}s', videoResult.fileName)
+      const fileName = await this.localPlayerExtension.openAnotherLocalVideo(this.getUIContext())
+      if (fileName !== null) logger.info('选择本地视频: %{public}s', fileName)
     } catch (err) {
       logger.error('选择视频文件失败: %{public}s', err instanceof Error ? err.message : String(err))
       this.showHudText('选择视频文件失败')
@@ -4311,14 +4562,15 @@ struct PlayerPage {
     }
     try {
       const context = getContext(this) as common.UIAbilityContext
-      const authorized = await LocalFilePicker.ensureReadableUri(this.videoUri) ||
-        await LocalFilePicker.authorizeExistingUri(context, this.videoUri)
+      const authorized = await this.localPlayerExtension.authorize(context, this.videoUri)
       if (!authorized) {
         this.showHudText('授权失败')
         return
       }
       this.playbackErrorText = ''
-      const options = PlaybackOptionsAdapter.fromStream(this.session!.stream, this.lastKnownPositionMs)
+      const options = this.withPlaybackIdentity(
+        PlaybackOptionsAdapter.fromStream(this.session!.stream, this.lastKnownPositionMs)
+      )
       if (this.lastKnownPositionMs > 0) {
         options.startPositionMs = this.lastKnownPositionMs
       }
@@ -4418,39 +4670,23 @@ struct PlayerPage {
         : PlaybackQueueItem.normalizePositionMs(this.positionMs)
       this.durationMs = normalizedDurationMs
       this.positionMs = normalizedPositionMs
-      const record = new LocalVideoRecord()
-      record.fileUri = this.videoUri
-      record.fileName = this.videoFileName
-      record.fileSize = this.videoFileSize
-      record.durationMs = normalizedDurationMs
-      record.positionMs = this.playerRememberPosition ? normalizedPositionMs : 0
-      record.lastPlayedAt = Date.now()
-      record.danmakuFileName = this.danmakuFileName
-      record.danmakuUri = this.danmakuUri
-      record.danmakuOffsetMs = this.danmakuOffsetMs
-      record.danmakuFormat = this.danmakuLoadedFormat
-      record.danmakuCount = this.danmakuLoadedCount
-      record.externalSubtitleFileName = this.externalSubtitleFileName
-      record.externalSubtitleUri = this.externalSubtitleUri
-      record.createdAt = Date.now()
       logger.info('Save local history: name=%{public}s position=%{public}d duration=%{public}d',
         this.videoFileName, this.positionMs, this.durationMs)
-      await this.localVideoHistoryStore.upsert(record)
-      if (captureExitFrame) {
-        const coverPositionMs = this.durationMs > 0
-          ? Math.min(this.positionMs, Math.max(0, this.durationMs - 1))
-          : this.positionMs
-        const thumbnailStore = LocalVideoThumbnailStore.getInstance()
-        let coverUri = await thumbnailStore
-          .ensureThumbnail(this.videoUri, this.videoFileName, this.videoFileSize, coverPositionMs)
-        if (coverUri.length === 0) {
-          coverUri = await thumbnailStore
-            .ensureRandomThumbnail(this.videoUri, this.videoFileName, this.videoFileSize)
-        }
-        if (coverUri.length > 0) {
-          await this.localVideoHistoryStore.updateCoverUri(record.fileKey, coverUri)
-        }
-      }
+      const update = new LocalHistoryUpdate()
+      update.videoUri = this.videoUri
+      update.videoFileName = this.videoFileName
+      update.videoFileSize = this.videoFileSize
+      update.durationMs = normalizedDurationMs
+      update.positionMs = normalizedPositionMs
+      update.rememberPosition = this.playerRememberPosition
+      update.danmakuFileName = this.danmakuFileName
+      update.danmakuUri = this.danmakuUri
+      update.danmakuOffsetMs = this.danmakuOffsetMs
+      update.danmakuFormat = this.danmakuLoadedFormat
+      update.danmakuCount = this.danmakuLoadedCount
+      update.externalSubtitleFileName = this.externalSubtitleFileName
+      update.externalSubtitleUri = this.externalSubtitleUri
+      await this.localPlayerExtension.saveHistory(update, captureExitFrame)
     } catch (err) {
       logger.warn('保存本地播放记录失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
@@ -4476,7 +4712,7 @@ struct PlayerPage {
       return
     }
     try {
-      await this.localVideoHistoryStore.updateExternalSubtitleBinding(
+      await this.localPlayerExtension.persistExternalSubtitle(
         this.videoUri, this.videoFileName, this.videoFileSize,
         this.externalSubtitleFileName, this.externalSubtitleUri)
       logger.info('已持久化外挂字幕选择: video=%{public}s subtitle=%{public}s',
@@ -4498,25 +4734,25 @@ struct PlayerPage {
     this.externalSubtitleRestoreInProgressForUrl = targetVideoUri
     const restoreToken = ++this.externalSubtitleRestoreToken
     try {
-      const record = await this.localVideoHistoryStore.getByFileIdentity(
+      const binding = await this.localPlayerExtension.restoreExternalSubtitle(
         targetVideoUri, this.videoFileName, this.videoFileSize)
-      if (record === null || record.externalSubtitleUri.length === 0) {
+      if (binding === null || binding.uri.length === 0) {
         this.externalSubtitleRestoreAttemptedForUrl = targetVideoUri
         return
       }
 
-      if (this.isAdvancedAssSubtitle(record.externalSubtitleFileName)) {
+      if (this.isAdvancedAssSubtitle(binding.fileName)) {
         if (this.playerEngine === null || !this.hasEngine) {
           return
         }
-        await this.playerEngine.addExternalSubtitle(record.externalSubtitleUri, record.externalSubtitleFileName)
+        await this.playerEngine.addExternalSubtitle(binding.uri, binding.fileName)
         if (!this.isPageAlive || targetVideoUri !== this.videoUri || restoreToken !== this.externalSubtitleRestoreToken) {
           return
         }
         this.externalSubtitleCues = []
         this.externalSubtitleText = ''
-        this.externalSubtitleFileName = record.externalSubtitleFileName
-        this.externalSubtitleUri = record.externalSubtitleUri
+        this.externalSubtitleFileName = binding.fileName
+        this.externalSubtitleUri = binding.uri
         this.setSubtitleMenuSelection(this.subtitleEnabled ? 'external' : 'off')
         await this.refreshPlayerTracks()
         this.externalSubtitleRestoreAttemptedForUrl = targetVideoUri
@@ -4525,7 +4761,7 @@ struct PlayerPage {
         return
       }
 
-      const cues = ExternalSubtitleParser.load(record.externalSubtitleUri)
+      const cues = ExternalSubtitleParser.load(binding.uri)
       if (cues.length === 0) {
         throw new Error('未识别到可显示的文本字幕')
       }
@@ -4533,8 +4769,8 @@ struct PlayerPage {
         return
       }
       this.externalSubtitleCues = cues
-      this.externalSubtitleFileName = record.externalSubtitleFileName
-      this.externalSubtitleUri = record.externalSubtitleUri
+      this.externalSubtitleFileName = binding.fileName
+      this.externalSubtitleUri = binding.uri
       this.setSubtitleMenuSelection(this.subtitleEnabled ? 'external' : 'off')
       this.syncExternalSubtitleClock(this.positionMs, this.isPlaying)
       this.externalSubtitleRestoreAttemptedForUrl = targetVideoUri
@@ -4710,7 +4946,7 @@ struct PlayerPage {
     const token = ++this.queueResolveToken
     let next: PlaybackSession
     try {
-      next = await resolver.resolve(item)
+      next = await resolver.resolvePlayback(item)
       const hasValidStructure = next !== null && typeof next === 'object' &&
         next.media !== null && typeof next.media === 'object' && !Array.isArray(next.media) &&
         next.stream !== null && typeof next.stream === 'object' && !Array.isArray(next.stream)
@@ -4772,7 +5008,9 @@ struct PlayerPage {
     this.videoDecoder = ''
     this.videoDynamicRange = ''
     this.completionHandledForUrl = ''
-    this.playbackOptions = PlaybackOptionsAdapter.fromStream(next.stream, startPositionMs)
+    this.playbackOptions = this.withPlaybackIdentity(
+      PlaybackOptionsAdapter.fromStream(next.stream, startPositionMs)
+    )
     this.syncPlaybackSessionMedia()
     this.showHudText(autoPlay ? '正在播放下一项' : '已切换视频')
   }

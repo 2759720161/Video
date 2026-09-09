@@ -3,6 +3,7 @@ import { RdbManager } from './RdbManager'
 import { RdbConstants } from '../constants/RdbConstants'
 import { PlaybackHistoryRecord } from '../models/PlaybackHistoryRecord'
 import { PlaybackHistoryChangeSignal } from './PlaybackHistoryChangeSignal'
+import { ArtworkResolver } from '../services/ArtworkResolver'
 
 /** 统一继续观看缓存；本地专属字幕和文件 URI 仍由 LocalVideoHistoryStore 管理。 */
 export class PlaybackHistoryStore {
@@ -51,8 +52,10 @@ export class PlaybackHistoryStore {
     record.mediaId = mediaId
     record.title = PlaybackHistoryStore.normalizeText(record.title)
     record.subtitle = PlaybackHistoryStore.normalizeText(record.subtitle)
-    record.artwork = PlaybackHistoryStore.normalizeText(record.artwork)
-    record.contextJson = PlaybackHistoryStore.normalizeText(record.contextJson)
+    record.artworkRef = ArtworkResolver.persistedValue('', record.artworkRef)
+    record.artwork = ArtworkResolver.persistedValue(record.artwork, record.artworkRef)
+    // context_json 作为兼容列保留，但 V2 起不再持久化 Provider 临时会话上下文。
+    record.contextJson = ''
     record.positionMs = Number.isFinite(record.positionMs) ? Math.max(0, Math.floor(record.positionMs)) : 0
     record.durationMs = Number.isFinite(record.durationMs) ? Math.max(0, Math.floor(record.durationMs)) : 0
     if (record.durationMs > 0) record.positionMs = Math.min(record.positionMs, record.durationMs)
@@ -67,7 +70,7 @@ export class PlaybackHistoryStore {
     if (existing !== null) {
       if (record.title.length === 0 && existing.title.length > 0) values.title = existing.title
       if (record.subtitle.length === 0 && existing.subtitle.length > 0) values.subtitle = existing.subtitle
-      if (record.artwork.length === 0 && existing.artwork.length > 0) values.artwork = existing.artwork
+      if (record.artwork.length === 0 && record.artworkRef.length === 0 && existing.artwork.length > 0) values.artwork = existing.artwork
       if (record.durationMs <= 0 && existing.durationMs > 0) {
         record.durationMs = existing.durationMs
         values.duration_ms = existing.durationMs
@@ -75,9 +78,6 @@ export class PlaybackHistoryStore {
       if (record.durationMs > 0) {
         record.positionMs = Math.min(record.positionMs, record.durationMs)
         values.position_ms = record.positionMs
-      }
-      if (record.contextJson.length === 0 && existing.contextJson.length > 0) {
-        values.context_json = existing.contextJson
       }
       const predicates = new relationalStore.RdbPredicates(RdbConstants.TABLE_PLAYBACK_HISTORY)
       predicates.equalTo(RdbConstants.COL_ID, existing.id)
@@ -121,6 +121,37 @@ export class PlaybackHistoryStore {
     return PlaybackHistoryStore.enqueueMutation<number>(() => this.clearAllInternal())
   }
 
+  /** 启动时清理旧版本可能把认证参数写入 artwork 列的历史记录。 */
+  async scrubSensitiveArtwork(): Promise<number> {
+    return PlaybackHistoryStore.enqueueMutation<number>(() => this.scrubSensitiveArtworkInternal())
+  }
+
+  private async scrubSensitiveArtworkInternal(): Promise<number> {
+    const predicates = new relationalStore.RdbPredicates(RdbConstants.TABLE_PLAYBACK_HISTORY)
+    const resultSet = await this.rdbManager.query(predicates)
+    let changed = 0
+    try {
+      if (resultSet.goToFirstRow()) {
+        do {
+          const id = this.readLong(resultSet, resultSet.getColumnIndex(RdbConstants.COL_ID))
+          const raw = this.readString(resultSet, resultSet.getColumnIndex(RdbConstants.COL_ARTWORK))
+          const safe = ArtworkResolver.persistedValue(raw)
+          const context = this.readString(resultSet, resultSet.getColumnIndex(RdbConstants.COL_CONTEXT_JSON))
+          if (id > 0 && (safe !== raw || context.length > 0)) {
+            const updatePredicates = new relationalStore.RdbPredicates(RdbConstants.TABLE_PLAYBACK_HISTORY)
+            updatePredicates.equalTo(RdbConstants.COL_ID, id)
+            changed += await this.rdbManager.update(RdbConstants.TABLE_PLAYBACK_HISTORY,
+              { artwork: safe, context_json: '' }, updatePredicates)
+          }
+        } while (resultSet.goToNextRow())
+      }
+    } finally {
+      resultSet.close()
+    }
+    if (changed > 0) PlaybackHistoryChangeSignal.notifyChanged()
+    return changed
+  }
+
   private async clearAllInternal(): Promise<number> {
     const predicates = new relationalStore.RdbPredicates(RdbConstants.TABLE_PLAYBACK_HISTORY)
     const rows = await this.rdbManager.delete(predicates)
@@ -143,6 +174,7 @@ export class PlaybackHistoryStore {
     copy.title = record.title
     copy.subtitle = record.subtitle
     copy.artwork = record.artwork
+    copy.artworkRef = record.artworkRef
     copy.positionMs = record.positionMs
     copy.durationMs = record.durationMs
     copy.lastPlayedAt = record.lastPlayedAt
@@ -169,6 +201,12 @@ export class PlaybackHistoryStore {
             this.readString(resultSet, resultSet.getColumnIndex(RdbConstants.COL_SUBTITLE)))
           record.artwork = PlaybackHistoryStore.normalizeText(
             this.readString(resultSet, resultSet.getColumnIndex(RdbConstants.COL_ARTWORK)))
+          if (ArtworkResolver.isStableReference(record.artwork)) {
+            record.artworkRef = record.artwork
+          } else if (ArtworkResolver.persistedValue(record.artwork).length === 0) {
+            // 历史旧记录可能含 api_key；读取时立即隔离，后续 upsert 会覆盖该值。
+            record.artwork = ''
+          }
           const positionMs = this.readLong(resultSet, resultSet.getColumnIndex(RdbConstants.COL_POSITION_MS))
           const durationMs = this.readLong(resultSet, resultSet.getColumnIndex(RdbConstants.COL_DURATION_MS))
           const lastPlayedAt = this.readLong(resultSet, resultSet.getColumnIndex(RdbConstants.COL_LAST_PLAYED_AT))

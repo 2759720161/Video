@@ -17,6 +17,11 @@ import {
   normalizeSeekSeconds
 } from '../../utils/PlayerPlaybackPreferences'
 import { getBottomSpacerHeight, getTopSpacerHeight, buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import {
+  EMBY_PLAYBACK_MODE_DEFAULT,
+  EmbyPlaybackMode,
+  PREFS_KEY_EMBY_PLAYBACK_MODE
+} from '../../providers/emby/EmbyPlaybackPolicy'
 
 @Entry
 @Component
@@ -26,6 +31,7 @@ struct PlayerSettingsPage {
   @StorageLink(PREFS_KEY_PLAYER_DEFAULT_SPEED) defaultSpeed: number = PLAYER_DEFAULT_SPEED
   @StorageLink(PREFS_KEY_PLAYER_SEEK_SECONDS) seekSeconds: number = PLAYER_SEEK_SECONDS_DEFAULT
   @StorageLink(PREFS_KEY_PLAYER_OPEN_ORIENTATION) openOrientation: string = PLAYER_OPEN_ORIENTATION_DEFAULT
+  @StorageLink(PREFS_KEY_EMBY_PLAYBACK_MODE) embyPlaybackMode: string = EMBY_PLAYBACK_MODE_DEFAULT
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
@@ -40,6 +46,8 @@ struct PlayerSettingsPage {
             this.ToggleRow($r('sys.symbol.template'), '自动开启画中画', this.autoPiP, (value: boolean) => this.setAutoPiP(value))
             Divider().color($r('app.color.divider_color')).margin({ left: 62 })
             this.ToggleRow($r('sys.symbol.play_fill'), '自动播放下一视频', this.autoNext, (value: boolean) => this.setBoolean(PREFS_KEY_PLAYER_AUTO_NEXT, value))
+            Divider().color($r('app.color.divider_color')).margin({ left: 62 })
+            this.EmbyPlaybackModeSelectRow()
             Divider().color($r('app.color.divider_color')).margin({ left: 62 })
             this.SelectRow($r('sys.symbol.play_round_rectangle'), '默认播放速度', this.speedLabel(), [{ value: '0.5×' }, { value: '0.75×' }, { value: '1.0×' }, { value: '1.25×' }, { value: '1.5×' }, { value: '2.0×' }], this.speedIndex(), (index: number) => this.setDefaultSpeed([0.5, 0.75, 1.0, 1.25, 1.5, 2.0][index]))
             Divider().color($r('app.color.divider_color')).margin({ left: 62 })
@@ -96,6 +104,22 @@ struct PlayerSettingsPage {
     } else {
       this.SelectRow($r('sys.symbol.goforward_15'), '快进与快退时长', this.seekSeconds + ' 秒', [{ value: '10 秒' }, { value: '15 秒' }, { value: '30 秒' }], this.seekIndex(), (index: number) => this.setSeekSeconds([10, 15, 30][index]))
     }
+  }
+
+  @Builder
+  private EmbyPlaybackModeSelectRow(): void {
+    Row() {
+      SymbolGlyph($r('sys.symbol.play_fill')).fontSize(24).fontColor([$r('app.color.accent_blue')]).width(34).margin({ right: 12 })
+      Column() {
+        Text('Emby 播放模式').fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+        Text('仅影响 Emby 来源，自动模式按服务端能力选择').fontSize(13).fontColor($r('app.color.text_secondary'))
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      Select([{ value: '自动' }, { value: '优先直接播放' }, { value: '服务端转码' }])
+        .selected(this.embyPlaybackModeIndex())
+        .value(this.embyPlaybackModeLabel())
+        .font({ size: 14, weight: FontWeight.Medium })
+        .onSelect((index: number) => this.setEmbyPlaybackMode(index))
+    }.width('100%').height(72).padding({ left: 16, right: 16 })
   }
 
   @Builder
@@ -166,6 +190,14 @@ struct PlayerSettingsPage {
     await PreferencesStore.getInstance().setString(PREFS_KEY_PLAYER_OPEN_ORIENTATION, value)
   }
 
+  private async setEmbyPlaybackMode(index: number): Promise<void> {
+    const value = index === 1 ? EmbyPlaybackMode.DIRECT :
+      index === 2 ? EmbyPlaybackMode.TRANSCODE : EmbyPlaybackMode.AUTO
+    this.embyPlaybackMode = value
+    AppStorage.setOrCreate(PREFS_KEY_EMBY_PLAYBACK_MODE, value)
+    await PreferencesStore.getInstance().setString(PREFS_KEY_EMBY_PLAYBACK_MODE, value)
+  }
+
   private speedLabel(): string { return this.defaultSpeed.toFixed(this.defaultSpeed % 1 === 0 ? 1 : 2) + '×' }
   private speedIndex(): number { const values: number[] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]; return values.indexOf(normalizePlayerSpeed(this.defaultSpeed)) }
   private seekIndex(): number { const values: number[] = [10, 15, 30]; return values.indexOf(normalizeSeekSeconds(this.seekSeconds)) }
@@ -177,5 +209,15 @@ struct PlayerSettingsPage {
   private openOrientationLabel(): string {
     const index = this.openOrientationIndex()
     return index === 1 ? '竖屏' : index === 2 ? '跟随系统' : '横屏'
+  }
+
+  private embyPlaybackModeIndex(): number {
+    return this.embyPlaybackMode === EmbyPlaybackMode.DIRECT ? 1 :
+      this.embyPlaybackMode === EmbyPlaybackMode.TRANSCODE ? 2 : 0
+  }
+
+  private embyPlaybackModeLabel(): string {
+    return this.embyPlaybackMode === EmbyPlaybackMode.DIRECT ? '优先直接播放' :
+      this.embyPlaybackMode === EmbyPlaybackMode.TRANSCODE ? '服务端转码' : '自动'
   }
 }

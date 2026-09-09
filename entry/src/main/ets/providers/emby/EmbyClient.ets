@@ -5,6 +5,8 @@ import {
   EmbyPlaybackRoute,
   EmbyServerConfig
 } from './EmbyModels'
+import { EmbyPlaybackInfo } from './EmbyPlaybackInfo'
+import { EmbyPlaybackMode, EmbyPlaybackPolicy } from './EmbyPlaybackPolicy'
 
 const EMBY_CLIENT_NAME: string = 'Yingxia'
 const EMBY_DEVICE_NAME: string = 'HarmonyOS'
@@ -157,28 +159,52 @@ export class EmbyClient {
     const path = '/Items/' + encodeURIComponent(item.id) + '/PlaybackInfo?UserId=' +
       encodeURIComponent(this.config.userId)
     const response = await this.requestObject(path, http.RequestMethod.GET)
-    const sourceValues = EmbyClient.readObjectArray(response, 'MediaSources')
-    if (sourceValues.length === 0) {
+    const info = EmbyPlaybackInfo.parse(response)
+    if (info.mediaSources.length === 0) {
       throw new Error('Emby 未返回可播放的媒体源')
     }
-    const source = sourceValues[0]
-    const mediaSourceId = EmbyClient.readString(source, 'Id', item.id)
-    const playSessionId = EmbyClient.readString(response, 'PlaySessionId', EmbyClient.createSessionId())
-    const directStreamUrl = EmbyClient.readString(source, 'DirectStreamUrl')
-    let url = directStreamUrl.length > 0 ? this.absoluteUrl(directStreamUrl) : ''
+    const playbackMode = await EmbyPlaybackPolicy.loadMode()
+    const source = EmbyPlaybackPolicy.selectSource(info.mediaSources, playbackMode)
+    const mediaSourceId = source.id.length > 0 ? source.id : item.id
+    const playSessionId = info.playSessionId.length > 0 ? info.playSessionId : EmbyClient.createSessionId()
+    let url = ''
+    let playMethod = 'DirectStream'
+    if (playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directPlayUrl.length > 0) {
+      url = this.absoluteUrl(source.directPlayUrl)
+      playMethod = 'DirectPlay'
+    }
+    if (url.length === 0 && playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directStreamUrl.length > 0) {
+      url = this.absoluteUrl(source.directStreamUrl)
+      playMethod = 'DirectStream'
+    }
+    if (url.length === 0 && playbackMode !== EmbyPlaybackMode.DIRECT && source.transcodingUrl.length > 0) {
+      url = this.absoluteUrl(source.transcodingUrl)
+      playMethod = 'Transcode'
+    }
     if (url.length === 0) {
-      const container = EmbyClient.safeContainer(EmbyClient.readString(source, 'Container', item.container))
-      url = this.config.baseUrl + '/Videos/' + encodeURIComponent(item.id) + '/stream/' + container +
-        '?static=true&MediaSourceId=' + encodeURIComponent(mediaSourceId) +
-        '&PlaySessionId=' + encodeURIComponent(playSessionId)
+      const container = EmbyClient.safeContainer(source.container.length > 0 ? source.container : item.container)
+    url = this.config.baseUrl + '/Videos/' + encodeURIComponent(item.id) + '/stream/' + container +
+      '?static=true&MediaSourceId=' + encodeURIComponent(mediaSourceId) +
+      '&PlaySessionId=' + encodeURIComponent(playSessionId)
+      if (playbackMode === EmbyPlaybackMode.TRANSCODE) {
+        playMethod = 'Transcode'
+      } else if (source.supportsDirectPlay && !source.supportsDirectStream) {
+        playMethod = 'DirectPlay'
+      } else {
+        playMethod = 'DirectStream'
+      }
     }
     url = EmbyClient.appendQuery(url, 'api_key', this.config.accessToken)
     const route = new EmbyPlaybackRoute()
     route.url = url
+    route.mediaSourceId = mediaSourceId
+    route.playSessionId = playSessionId
+    route.playMethod = playMethod
+    route.requiredHttpHeaders = source.requiredHttpHeaders
     route.context.itemId = item.id
     route.context.mediaSourceId = mediaSourceId
     route.context.playSessionId = playSessionId
-    route.context.playMethod = 'DirectStream'
+    route.context.playMethod = playMethod
     return route
   }
 
@@ -360,6 +386,7 @@ export class EmbyClient {
     const normalized = value.toLowerCase().split(',')[0]
     return /^[a-z0-9]+$/.test(normalized) ? normalized : 'mp4'
   }
+
 
   private static isFolderType(type: string): boolean {
     return type === 'CollectionFolder' || type === 'Folder' || type === 'UserView' ||

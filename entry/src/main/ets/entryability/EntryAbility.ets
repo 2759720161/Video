@@ -3,7 +3,9 @@ import { preferences } from '@kit.ArkData'
 import { display, window } from '@kit.ArkUI'
 import { PreferencesStore } from '../store/PreferencesStore'
 import { PLAYBACK_HISTORY_VERSION_KEY } from '../store/PlaybackHistoryChangeSignal'
+import { PlaybackHistoryStore } from '../store/PlaybackHistoryStore'
 import { MediaSourceMigration } from '../store/MediaSourceMigration'
+import { SourceCredentialMigration } from '../services/security/SourceCredentialMigration'
 import { ProviderRegistry } from '../providers/base/ProviderRegistry'
 import { LocalProvider } from '../providers/local/LocalProvider'
 import { RdbManager } from '../store/RdbManager'
@@ -177,6 +179,11 @@ export default class EntryAbility extends UIAbility {
       } catch (err) {
         logger.error('Migrate media sources failed: %{public}s', String(err))
       }
+      try {
+        await SourceCredentialMigration.runIfNeeded()
+      } catch (err) {
+        logger.error('Migrate source credentials failed: %{public}s', String(err))
+      }
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_AUTO_PIP, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_PLAYER_AUTO_PIP, PLAYER_AUTO_PIP_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_AUTO_NEXT, await PreferencesStore.getInstance().getBoolean(PREFS_KEY_PLAYER_AUTO_NEXT, PLAYER_AUTO_NEXT_DEFAULT))
       AppStorage.setOrCreate(PREFS_KEY_PLAYER_DEFAULT_SPEED, await PreferencesStore.getInstance().getNumber(PREFS_KEY_PLAYER_DEFAULT_SPEED, PLAYER_DEFAULT_SPEED))
@@ -205,6 +212,7 @@ export default class EntryAbility extends UIAbility {
     }
     try {
       await RdbManager.getInstance().init(this.context)
+      await new PlaybackHistoryStore().scrubSensitiveArtwork()
       AppStorage.setOrCreate('appRdbReady', true)
     } catch (err) {
       logger.error('Initialize local history database failed: %{public}s', String(err))

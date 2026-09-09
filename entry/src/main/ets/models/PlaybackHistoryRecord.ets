@@ -6,6 +6,8 @@ export class PlaybackHistoryRecord {
   title: string = ''
   subtitle: string = ''
   artwork: string = ''
+  /** 持久化后应为 ArtworkRef；保留 artwork 字段兼容本地封面和旧数据。 */
+  artworkRef: string = ''
   positionMs: number = 0
   durationMs: number = 0
   lastPlayedAt: number = 0

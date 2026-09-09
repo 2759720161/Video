@@ -125,4 +125,8 @@ export class EmbyPlaybackContext {
 export class EmbyPlaybackRoute {
   url: string = ''
   context: EmbyPlaybackContext = new EmbyPlaybackContext()
+  mediaSourceId: string = ''
+  playSessionId: string = ''
+  playMethod: string = 'DirectStream'
+  requiredHttpHeaders: Record<string, string> = {}
 }

@@ -4,6 +4,8 @@ import { EmbyServerConfig } from '../providers/emby/EmbyModels'
 import { createMediaSourceId } from '../core/media/MediaSourceInstance'
 import { PlaybackHistoryStore } from './PlaybackHistoryStore'
 import { EmbySourceConfigCodec } from '../providers/emby/EmbySourceConfig'
+import { SecureCredentialStore } from '../services/security/SecureCredentialStore'
+import { SourceCredential } from '../services/security/SourceCredential'
 
 export const PREFS_KEY_MEDIA_SOURCES: string = 'mediaSourcesV1'
 export const MEDIA_SOURCE_VERSION_KEY: string = 'mediaSourceVersion'
@@ -160,6 +162,7 @@ export class MediaSourceStore {
     if (filtered.length === sources.length) throw new Error('Media source not found: ' + normalizedId)
     await MediaSourceStore.save(filtered)
     await new PlaybackHistoryStore().deleteBySourceId(normalizedId)
+    await SecureCredentialStore.getInstance().delete(normalizedId)
   }
 
   static async setEnabled(id: string, enabled: boolean): Promise<void> {
@@ -256,6 +259,12 @@ export class MediaSourceStore {
     source.name = normalizedConfig.serverName.length > 0 ? normalizedConfig.serverName : 'Emby'
     source.enabled = true
     source.configJson = EmbySourceConfigCodec.encode(normalizedConfig)
+    const credential = new SourceCredential()
+    credential.sourceId = source.id
+    credential.providerType = 'emby'
+    credential.values['accessToken'] = normalizedConfig.accessToken
+    // 写入凭据成功后再落盘无敏感字段的 source，避免升级过程中丢失令牌。
+    await SecureCredentialStore.getInstance().set(credential)
     if (source.createdAt === 0) {
       await MediaSourceStore.addInternal(source)
     } else {
@@ -304,6 +313,7 @@ export class MediaSourceStore {
       const historyStore = new PlaybackHistoryStore()
       for (let i = 0; i < removedSourceIds.length; i++) {
         await historyStore.deleteBySourceId(removedSourceIds[i])
+        await SecureCredentialStore.getInstance().delete(removedSourceIds[i])
       }
     }
   }

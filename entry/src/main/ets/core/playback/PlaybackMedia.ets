@@ -5,5 +5,7 @@ export class PlaybackMedia {
   title: string = ''
   subtitle: string = ''
   artwork: string = ''
+  /** 稳定 ArtworkRef；artwork 只保留运行时展示 URL。 */
+  artworkRef: string = ''
   durationMs: number = 0
 }

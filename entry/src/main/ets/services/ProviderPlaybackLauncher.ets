@@ -50,9 +50,9 @@ export class ProviderPlaybackLauncher {
       new ProviderPlaybackResolver(provider))
     try {
       if (replace) {
-        await uiContext.getRouter().replaceUrl({ url: 'pages/player/PlayerPage', params: { sessionId: sessionId } })
+        await uiContext.getRouter().replaceUrl({ url: 'pages/player/PlayerPage', params: ProviderPlaybackLauncher.routeParams(sessionId, selected) })
       } else {
-        await uiContext.getRouter().pushUrl({ url: 'pages/player/PlayerPage', params: { sessionId: sessionId } })
+        await uiContext.getRouter().pushUrl({ url: 'pages/player/PlayerPage', params: ProviderPlaybackLauncher.routeParams(sessionId, selected) })
       }
     } catch (err) {
       manager.release(sessionId)
@@ -109,16 +109,33 @@ export class ProviderPlaybackLauncher {
     queueItem.title = ProviderPlaybackLauncher.normalizeText(item.title)
     queueItem.subtitle = ProviderPlaybackLauncher.normalizeText(item.subtitle)
     queueItem.artwork = ProviderPlaybackLauncher.normalizeText(item.poster)
+    queueItem.artworkRef = ProviderPlaybackLauncher.normalizeText(item.artworkRef)
     queueItem.durationMs = PlaybackQueueItem.normalizeDurationMs(item.durationMs)
     const normalizedPositionMs = PlaybackQueueItem.normalizePositionMs(item.positionMs)
     queueItem.positionMs = queueItem.durationMs > 0
       ? Math.min(normalizedPositionMs, queueItem.durationMs) : normalizedPositionMs
     queueItem.variantId = ProviderPlaybackLauncher.normalizeText(item.variantId)
+    for (let i = 0; i < item.variants.length; i++) {
+      const variant = item.variants[i]
+      if (variant !== null && typeof variant === 'object' && variant.id.trim().length > 0) {
+        queueItem.variants.push(variant)
+      }
+    }
     queueItem.startFromBeginning = startFromBeginning
     return queueItem
   }
 
   private static normalizeText(value: string): string {
     return typeof value === 'string' ? value.trim() : ''
+  }
+
+  private static routeParams(sessionId: string, item: PlaybackQueueItem): Record<string, Object> {
+    return {
+      'sessionId': sessionId,
+      'sourceId': item.sourceId,
+      'mediaId': item.mediaId,
+      'variantId': item.variantId,
+      'positionMs': item.positionMs
+    }
   }
 }

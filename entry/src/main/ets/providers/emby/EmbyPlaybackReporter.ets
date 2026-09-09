@@ -5,6 +5,7 @@ import type { PlaybackReporter } from '../../core/playback/PlaybackReporter'
 import { PlaybackMedia } from '../../core/playback/PlaybackMedia'
 import { PlaybackHistoryRecord } from '../../models/PlaybackHistoryRecord'
 import { PlaybackHistoryStore } from '../../store/PlaybackHistoryStore'
+import { ArtworkResolver } from '../../services/ArtworkResolver'
 
 const logger = new Logger('EmbyPlaybackReporter')
 
@@ -22,6 +23,7 @@ export class EmbyPlaybackReporter implements PlaybackReporter {
     this.media.title = EmbyPlaybackReporter.normalizeText(media.title)
     this.media.subtitle = EmbyPlaybackReporter.normalizeText(media.subtitle)
     this.media.artwork = EmbyPlaybackReporter.normalizeText(media.artwork)
+    this.media.artworkRef = ArtworkResolver.persistedValue('', media.artworkRef)
     this.media.durationMs = Number.isFinite(media.durationMs) && media.durationMs > 0 ? Math.floor(media.durationMs) : 0
     this.context = new EmbyPlaybackContext()
     this.context.itemId = EmbyPlaybackReporter.normalizeText(context.itemId)
@@ -64,13 +66,15 @@ export class EmbyPlaybackReporter implements PlaybackReporter {
       record.mediaId = this.media.mediaId
       record.title = this.media.title
       record.subtitle = this.media.subtitle
-      record.artwork = this.media.artwork
+      record.artworkRef = this.media.artworkRef
+      record.artwork = ArtworkResolver.persistedValue(this.media.artwork, this.media.artworkRef)
       record.durationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.floor(durationMs) :
         (Number.isFinite(this.media.durationMs) && this.media.durationMs > 0 ? Math.floor(this.media.durationMs) : 0)
       const normalizedPositionMs = Number.isFinite(positionMs) ? Math.max(0, Math.floor(positionMs)) : 0
       record.positionMs = record.durationMs > 0
         ? Math.min(normalizedPositionMs, record.durationMs) : normalizedPositionMs
-      record.contextJson = this.context.encode()
+      // PlaybackSession 的上下文只服务于当前进程；历史记录不保存临时会话标识。
+      record.contextJson = ''
       await this.historyStore.upsert(record)
     } catch (err) {
       logger.warn('local playback history cache failed: %{public}s', err instanceof Error ? err.message : String(err))

@@ -11,6 +11,9 @@ import { EmbyClient } from './EmbyClient'
 import { EmbyItem, EmbyPlaybackContext, EmbyServerConfig } from './EmbyModels'
 import { EmbyPlaybackReporter } from './EmbyPlaybackReporter'
 import { EmbySourceConfigCodec } from './EmbySourceConfig'
+import { SecureCredentialStore } from '../../services/security/SecureCredentialStore'
+import { ProviderHealth } from '../../core/media/ProviderHealth'
+import { ArtworkResolver } from '../../services/ArtworkResolver'
 
 /** Emby API 和通用媒体模型之间的适配层。 */
 export class EmbyProvider implements MediaProvider, PlaybackResolver {
@@ -24,9 +27,13 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     this.client = new EmbyClient(this.config)
   }
 
-  static fromSource(source: MediaSourceInstance): EmbyProvider {
+  static async fromSource(source: MediaSourceInstance): Promise<EmbyProvider> {
     const config = EmbySourceConfigCodec.decode(source.configJson)
     if (config === null) throw new Error('Emby 配置无效')
+    const credential = await SecureCredentialStore.getInstance().get(source.id)
+    const accessToken = credential === null ? '' : EmbyProvider.readCredential(credential, 'accessToken')
+    if (accessToken.length > 0) config.accessToken = accessToken
+    if (!config.isValid()) throw new Error('Emby 凭据无效')
     return new EmbyProvider(source, config)
   }
 
@@ -64,7 +71,9 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
   hasCapability(capability: ProviderCapability): boolean {
     return capability === ProviderCapability.HOME || capability === ProviderCapability.SEARCH ||
       capability === ProviderCapability.BROWSE || capability === ProviderCapability.RESUME ||
-      capability === ProviderCapability.PROGRESS_SYNC || capability === ProviderCapability.TRANSCODE
+      capability === ProviderCapability.DETAIL || capability === ProviderCapability.REMOTE_PROGRESS_SYNC ||
+      capability === ProviderCapability.TRANSCODE || capability === ProviderCapability.MULTI_VERSION ||
+      capability === ProviderCapability.ARTWORK
   }
 
   async getHome(): Promise<MediaSection[]> {
@@ -93,6 +102,28 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     return this.toMediaItems(await this.client.searchItems(keyword))
   }
 
+  async getResumeItems(limit: number = 0): Promise<MediaItem[]> {
+    const values = await this.client.getResumeItems()
+    const result = this.toMediaItems(values.filter((item: EmbyItem) =>
+      item.durationMs() <= 0 || item.resumePositionMs() / item.durationMs() < 0.995))
+    return limit > 0 ? result.slice(0, limit) : result
+  }
+
+  async testConnection(): Promise<ProviderHealth> {
+    const health = new ProviderHealth()
+    const started = Date.now()
+    try {
+      await this.client.getLibraries()
+      health.ok = true
+      health.message = 'Emby 连接正常'
+    } catch (err) {
+      health.ok = false
+      health.message = err instanceof Error ? err.message : 'Emby 连接失败'
+    }
+    health.latencyMs = Math.max(0, Date.now() - started)
+    return health
+  }
+
   async getItem(itemId: string): Promise<MediaItem | null> {
     const normalizedItemId = EmbyProvider.normalizeText(itemId)
     if (normalizedItemId.length === 0) return null
@@ -114,8 +145,10 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     session.media.title = embyItem.name
     session.media.subtitle = embyItem.subtitle()
     session.media.artwork = this.client.imageUrl(embyItem)
+    session.media.artworkRef = ArtworkResolver.forEmby(this.source.id, embyItem.id, embyItem.primaryImageTag)
     session.media.durationMs = embyItem.durationMs()
     session.stream.url = route.url
+    session.stream.headers = route.requiredHttpHeaders
     // Emby UserData is authoritative. The local unified-history cache is only
     // used for displaying the home page and must not override a newer server
     // resume position when the item is opened again.
@@ -129,10 +162,6 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     session.queue = [item]
     session.queueIndex = 0
     return session
-  }
-
-  async resolve(item: PlaybackQueueItem): Promise<PlaybackSession> {
-    return this.resolvePlayback(item)
   }
 
   async refreshQueue(session: PlaybackSession): Promise<PlaybackQueueItem[]> {
@@ -200,10 +229,12 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     const result = new MediaItem()
     result.sourceId = this.source.id
     result.id = item.id
+    result.parentId = item.parentId
     result.title = item.name
     result.subtitle = item.subtitle()
     result.overview = item.overview
     result.poster = this.client.imageUrl(item)
+    result.artworkRef = ArtworkResolver.forEmby(this.source.id, item.id, item.primaryImageTag)
     result.durationMs = item.durationMs()
     result.positionMs = item.resumePositionMs()
     result.year = item.productionYear
@@ -220,6 +251,7 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     queueItem.title = item.title
     queueItem.subtitle = item.subtitle
     queueItem.artwork = item.poster
+    queueItem.artworkRef = ArtworkResolver.forEmby(item.sourceId, item.id, '')
     queueItem.positionMs = PlaybackQueueItem.normalizePositionMs(item.positionMs)
     queueItem.durationMs = PlaybackQueueItem.normalizeDurationMs(item.durationMs)
     queueItem.variantId = item.variantId
@@ -239,6 +271,12 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
   }
 
   private static normalizeText(value: string): string {
+    return typeof value === 'string' ? value.trim() : ''
+  }
+
+  private static readCredential(credential: import('../../services/security/SourceCredential').SourceCredential,
+    key: string): string {
+    const value = credential.values[key]
     return typeof value === 'string' ? value.trim() : ''
   }
 }

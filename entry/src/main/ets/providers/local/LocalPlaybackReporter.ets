@@ -49,6 +49,7 @@ export class LocalPlaybackReporter implements PlaybackReporter {
       history.mediaId = LocalPlaybackIdentity.fromRecord(this.record)
       history.title = this.record.fileName
       history.artwork = this.record.coverUri
+      history.artworkRef = ''
       history.positionMs = this.record.positionMs
       history.durationMs = this.record.durationMs
       await this.historyStore.upsert(history)

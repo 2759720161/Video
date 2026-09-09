@@ -370,7 +370,7 @@ export class TypeNodePiPSession {
     const index = session.queueIndex + direction
     try {
       const selected = session.queue[index]
-      const next = await resolver.resolve(selected)
+      const next = await resolver.resolvePlayback(selected)
       const hasValidStructure = next !== null && typeof next === 'object' &&
         next.media !== null && typeof next.media === 'object' && !Array.isArray(next.media) &&
         next.stream !== null && typeof next.stream === 'object' && !Array.isArray(next.stream)

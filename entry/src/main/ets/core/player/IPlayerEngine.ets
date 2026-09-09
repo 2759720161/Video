@@ -49,6 +49,8 @@ export interface IPlayerEngine {
 
 export class PlaybackOptions {
   url: string = ''
+  /** Stable source/media identity used for in-process resume guards. */
+  mediaIdentity: string = ''
   headers: Record<string, string> = {}
   startPositionMs: number = 0
   referer: string = ''

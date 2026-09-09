@@ -2,15 +2,12 @@ import { promptAction, router } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { HdsNavigation, HdsNavigationIconOptions, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
-import { LocalFilePicker } from '../../services/LocalFilePicker'
-import { LocalVideoRecord } from '../../models/LocalVideoRecord'
-import { LocalPlaybackLauncher } from '../../services/LocalPlaybackLauncher'
-import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
 import { PlaybackHistoryStore } from '../../store/PlaybackHistoryStore'
 import { MediaSourceStore, MEDIA_SOURCE_VERSION_KEY } from '../../store/MediaSourceStore'
-import { PlaybackHistoryRecord } from '../../models/PlaybackHistoryRecord'
+import { PlaybackHistoryViewItem } from '../../models/PlaybackHistoryViewItem'
+import { PlaybackHistoryRepository } from '../../services/PlaybackHistoryRepository'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
-import { LocalPlaybackIdentity } from '../../providers/local/LocalPlaybackIdentity'
+import { LocalPlayerExtension } from '../../providers/local/LocalPlayerExtension'
 import { LOCAL_VIDEO_HISTORY_VERSION_KEY } from '../../store/LocalVideoHistoryChangeSignal'
 import { Logger } from '../../utils/Logger'
 import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
@@ -28,7 +25,7 @@ const HISTORY_HIGHLIGHT_LIMIT = 5
 
 class PlaybackHistoryGroup {
   title: string = ''
-  records: LocalVideoRecord[] = []
+  records: PlaybackHistoryViewItem[] = []
 }
 
 @Entry
@@ -41,15 +38,16 @@ struct ContinueWatchingPage {
   @StorageLink(LOCAL_VIDEO_HISTORY_VERSION_KEY) @Watch('onHistoryChanged') historyVersion: number = 0
   @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onSourceChanged') sourceVersion: number = 0
   @StorageLink(PLAYBACK_HISTORY_VERSION_KEY) @Watch('onPlaybackHistoryChanged') playbackHistoryVersion: number = 0
-  @State records: LocalVideoRecord[] = []
+  @State records: PlaybackHistoryViewItem[] = []
   @State activeFilter: string = 'all'
   @State featuredIndex: number = 0
   @State isEditMode: boolean = false
-  @State selectedIds: number[] = []
+  @State selectedIds: string[] = []
   @State showDeleteDialog: boolean = false
   private scroller: Scroller = new Scroller()
-  private historyStore: LocalVideoHistoryStore = new LocalVideoHistoryStore()
   private unifiedHistoryStore: PlaybackHistoryStore = new PlaybackHistoryStore()
+  private historyRepository: PlaybackHistoryRepository = new PlaybackHistoryRepository()
+  private localPlayerExtension: LocalPlayerExtension = new LocalPlayerExtension()
   private reloadGeneration: number = 0
 
   aboutToAppear(): void {
@@ -150,9 +148,9 @@ struct ContinueWatchingPage {
     if (this.getFeaturedRecords().length > 0) {
       Column({ space: 0 }) {
         Swiper() {
-          ForEach(this.getFeaturedRecords(), (record: LocalVideoRecord) => {
+          ForEach(this.getFeaturedRecords(), (record: PlaybackHistoryViewItem) => {
             this.HistoryHighlightCard(record)
-          }, (record: LocalVideoRecord) => 'history_highlight_' + record.id + '_' + record.coverUri + '_' + record.positionMs)
+          }, (record: PlaybackHistoryViewItem) => 'history_highlight_' + record.key + '_' + record.artworkRef + '_' + record.positionMs)
         }
         .width('100%')
         .height(224)
@@ -174,14 +172,14 @@ struct ContinueWatchingPage {
   }
 
   @Builder
-  private HistoryHighlightCard(record: LocalVideoRecord): void {
+  private HistoryHighlightCard(record: PlaybackHistoryViewItem): void {
     Stack({ alignContent: Alignment.BottomStart }) {
-      Image(record.coverUri.length > 0 ? record.coverUri : $r('app.media.ic_placeholder'))
+      Image(record.artworkUrl.length > 0 ? record.artworkUrl : $r('app.media.ic_placeholder'))
         .draggable(false)
         .width('100%')
         .height(224)
         .objectFit(ImageFit.Cover)
-        .opacity(record.coverUri.length > 0 ? 1 : 0.82)
+        .opacity(record.artworkUrl.length > 0 ? 1 : 0.82)
 
       Column() {
         Blank().layoutWeight(1)
@@ -214,7 +212,7 @@ struct ContinueWatchingPage {
   private HistoryHighlightDetails(): void {
     if (this.getCurrentFeaturedRecord() !== undefined) {
       Column({ space: 5 }) {
-        Text(this.getCurrentFeaturedRecord()!.fileName)
+        Text(this.getCurrentFeaturedRecord()!.title)
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
@@ -270,9 +268,9 @@ struct ContinueWatchingPage {
             .width('100%')
             .margin({ top: 16, bottom: 6 })
 
-          ForEach(group.records, (record: LocalVideoRecord) => {
+          ForEach(group.records, (record: PlaybackHistoryViewItem) => {
             this.HistoryMediaRow(record)
-          }, (record: LocalVideoRecord) => 'history_row_' + record.id + '_' + record.coverUri + '_' + record.positionMs)
+          }, (record: PlaybackHistoryViewItem) => 'history_row_' + record.key + '_' + record.artworkRef + '_' + record.positionMs)
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
@@ -283,17 +281,17 @@ struct ContinueWatchingPage {
   }
 
   @Builder
-  private HistoryMediaRow(record: LocalVideoRecord): void {
+  private HistoryMediaRow(record: PlaybackHistoryViewItem): void {
     Column() {
       Row({ space: 12 }) {
         Stack({ alignContent: Alignment.BottomStart }) {
-          Image(record.coverUri.length > 0 ? record.coverUri : $r('app.media.ic_placeholder'))
+          Image(record.artworkUrl.length > 0 ? record.artworkUrl : $r('app.media.ic_placeholder'))
             .draggable(false)
             .width(112)
             .height(63)
             .objectFit(ImageFit.Cover)
             .borderRadius(10)
-            .opacity(record.coverUri.length > 0 ? 1 : 0.82)
+            .opacity(record.artworkUrl.length > 0 ? 1 : 0.82)
           if (record.durationMs > 0) {
             Progress({
               value: Math.min(record.positionMs, record.durationMs),
@@ -310,7 +308,7 @@ struct ContinueWatchingPage {
         .height(63)
 
         Column() {
-          Text(record.fileName)
+          Text(record.title)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
@@ -333,9 +331,9 @@ struct ContinueWatchingPage {
         .alignItems(HorizontalAlign.Start)
 
         if (this.isEditMode) {
-          SymbolGlyph(this.isSelected(record.id) ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.checkmark_circle'))
+          SymbolGlyph(this.isSelected(record.key) ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.checkmark_circle'))
             .fontSize(24)
-            .fontColor([this.isSelected(record.id) ? $r('sys.color.font_emphasize') : $r('app.color.text_secondary')])
+            .fontColor([this.isSelected(record.key) ? $r('sys.color.font_emphasize') : $r('app.color.text_secondary')])
             .width(28)
             .margin({ left: 8 })
         } else {
@@ -408,22 +406,20 @@ struct ContinueWatchingPage {
     }
     const generation = ++this.reloadGeneration
     try {
-      const localRecords = await this.historyStore.getAll()
-      if (generation !== this.reloadGeneration) return
-      const unifiedRecords = await this.unifiedHistoryStore.getAll()
-      if (generation !== this.reloadGeneration) return
       const sources = await MediaSourceStore.getAll()
       if (generation !== this.reloadGeneration) return
       const enabledSources: Record<string, boolean> = {}
       for (let i = 0; i < sources.length; i++) enabledSources[sources[i].id] = sources[i].enabled
-      const merged: LocalVideoRecord[] = localRecords
-      for (let i = 0; i < unifiedRecords.length; i++) {
-        const unified = unifiedRecords[i]
-        if (unified.sourceId === 'local') continue
-        if (enabledSources[unified.sourceId] !== true) continue
-        merged.push(this.toDisplayRecord(unified))
+      const all = await this.historyRepository.getAll()
+      if (generation !== this.reloadGeneration) return
+      const merged: PlaybackHistoryViewItem[] = []
+      for (let i = 0; i < all.length; i++) {
+        const item = all[i]
+        if (item.sourceId !== 'local' && enabledSources[item.sourceId] !== true) continue
+        merged.push(item)
       }
-      merged.sort((left: LocalVideoRecord, right: LocalVideoRecord) => right.lastPlayedAt - left.lastPlayedAt)
+      merged.sort((left: PlaybackHistoryViewItem, right: PlaybackHistoryViewItem) => right.lastPlayedAt - left.lastPlayedAt)
+      await this.historyRepository.resolveArtwork(merged, getContext(this) as common.UIAbilityContext)
       if (generation !== this.reloadGeneration) return
       this.records = merged
       this.removeMissingSelections()
@@ -443,15 +439,15 @@ struct ContinueWatchingPage {
       groups.push(group)
     }
     const filtered = this.getFilteredRecords()
-    const featuredIds: number[] = []
+    const featuredIds: string[] = []
     if (!this.isEditMode) {
       const featured = this.getFeaturedRecords()
       for (let i = 0; i < featured.length; i++) {
-        featuredIds.push(featured[i].id)
+        featuredIds.push(featured[i].key)
       }
     }
     for (let i = 0; i < filtered.length; i++) {
-      if (featuredIds.indexOf(filtered[i].id) >= 0) {
+      if (featuredIds.indexOf(filtered[i].key) >= 0) {
         continue
       }
       groups[this.getDateGroupIndex(filtered[i].lastPlayedAt)].records.push(filtered[i])
@@ -465,11 +461,11 @@ struct ContinueWatchingPage {
     return visible
   }
 
-  private getFilteredRecords(): LocalVideoRecord[] {
+  private getFilteredRecords(): PlaybackHistoryViewItem[] {
     if (this.activeFilter === 'all') {
       return this.records
     }
-    const filtered: LocalVideoRecord[] = []
+    const filtered: PlaybackHistoryViewItem[] = []
     for (let i = 0; i < this.records.length; i++) {
       if (!this.isCompleted(this.records[i])) {
         filtered.push(this.records[i])
@@ -478,8 +474,8 @@ struct ContinueWatchingPage {
     return filtered
   }
 
-  private getFeaturedRecords(): LocalVideoRecord[] {
-    const featured: LocalVideoRecord[] = []
+  private getFeaturedRecords(): PlaybackHistoryViewItem[] {
+    const featured: PlaybackHistoryViewItem[] = []
     const filtered = this.getFilteredRecords()
     for (let i = 0; i < filtered.length && featured.length < HISTORY_HIGHLIGHT_LIMIT; i++) {
       featured.push(filtered[i])
@@ -487,7 +483,7 @@ struct ContinueWatchingPage {
     return featured
   }
 
-  private getCurrentFeaturedRecord(): LocalVideoRecord | undefined {
+  private getCurrentFeaturedRecord(): PlaybackHistoryViewItem | undefined {
     const featured = this.getFeaturedRecords()
     if (featured.length === 0) {
       return undefined
@@ -513,7 +509,7 @@ struct ContinueWatchingPage {
     return diffDays < 7 ? 2 : 3
   }
 
-  private progressSummary(record: LocalVideoRecord): string {
+  private progressSummary(record: PlaybackHistoryViewItem): string {
     if (this.isCompleted(record)) {
       return '已播放完'
     }
@@ -525,22 +521,22 @@ struct ContinueWatchingPage {
     return remainMinutes > 0 ? '已观看 ' + percent + '% · 剩余 ' + remainMinutes + ' 分钟' : '已观看 ' + percent + '%'
   }
 
-  private isCompleted(record: LocalVideoRecord): boolean {
-    return record.durationMs > 0 && record.positionMs / record.durationMs >= COMPLETED_THRESHOLD
+  private isCompleted(record: PlaybackHistoryViewItem): boolean {
+    return record.completed || (record.durationMs > 0 && record.positionMs / record.durationMs >= COMPLETED_THRESHOLD)
   }
 
-  private handleRecordTap(record: LocalVideoRecord): void {
+  private handleRecordTap(record: PlaybackHistoryViewItem): void {
     if (this.isEditMode) {
-      this.toggleSelect(record.id)
+      this.toggleSelect(record.key)
       return
     }
     this.openRecord(record)
   }
 
-  private showRecordActions(record: LocalVideoRecord): void {
+  private showRecordActions(record: PlaybackHistoryViewItem): void {
     try {
       this.getUIContext().getPromptAction().showActionMenu({
-        title: record.fileName,
+        title: record.title,
         buttons: [
           { text: '继续播放', color: $r('app.color.text_primary') },
           { text: '从头播放', color: $r('app.color.text_primary') },
@@ -564,7 +560,7 @@ struct ContinueWatchingPage {
     }
   }
 
-  private confirmRemoveRecord(record: LocalVideoRecord): void {
+  private confirmRemoveRecord(record: PlaybackHistoryViewItem): void {
     try {
       this.getUIContext().getPromptAction().showDialog({
         title: '从播放历史移除？',
@@ -587,30 +583,23 @@ struct ContinueWatchingPage {
     }
   }
 
-  private async removeRecord(record: LocalVideoRecord): Promise<void> {
+  private async removeRecord(record: PlaybackHistoryViewItem): Promise<void> {
     try {
-      if (record.sourceId !== 'local') {
-        const unifiedId = record.id < 0 ? -record.id - 2 : record.id
-        if (unifiedId <= 0) return
-        await this.unifiedHistoryStore.deleteById(unifiedId)
-        this.removeRecordFromPage(record.id)
-        return
+      if (record.sourceId === 'local') {
+        await this.localPlayerExtension.deleteHistory(record.localRecordId)
       }
-      await LocalFilePicker.revokeUriPermission(record.fileUri)
-      await this.historyStore.deleteById(record.id)
-      const unifiedLocal = await this.findLocalUnifiedHistory(record)
-      if (unifiedLocal !== null) await this.unifiedHistoryStore.deleteById(unifiedLocal.id)
-      this.removeRecordFromPage(record.id)
+      if (record.remoteRecordId > 0) await this.unifiedHistoryStore.deleteById(record.remoteRecordId)
+      this.removeRecordFromPage(record.key)
     } catch (err) {
       logger.warn('移除播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
       await this.reloadHistory()
     }
   }
 
-  private toggleSelect(id: number): void {
+  private toggleSelect(id: string): void {
     const index = this.selectedIds.indexOf(id)
     if (index >= 0) {
-      this.selectedIds = this.selectedIds.filter((value: number) => value !== id)
+      this.selectedIds = this.selectedIds.filter((value: string) => value !== id)
     } else {
       this.selectedIds = [...this.selectedIds, id]
     }
@@ -621,14 +610,14 @@ struct ContinueWatchingPage {
       this.selectedIds = []
       return
     }
-    const ids: number[] = []
+    const ids: string[] = []
     for (let i = 0; i < this.records.length; i++) {
-      ids.push(this.records[i].id)
+      ids.push(this.records[i].key)
     }
     this.selectedIds = ids
   }
 
-  private isSelected(id: number): boolean {
+  private isSelected(id: string): boolean {
     return this.selectedIds.indexOf(id) >= 0
   }
 
@@ -639,18 +628,18 @@ struct ContinueWatchingPage {
   }
 
   private removeMissingSelections(): void {
-    const existing: number[] = []
+    const existing: string[] = []
     for (let i = 0; i < this.records.length; i++) {
-      existing.push(this.records[i].id)
+      existing.push(this.records[i].key)
     }
-    this.selectedIds = this.selectedIds.filter((id: number) => existing.indexOf(id) >= 0)
+    this.selectedIds = this.selectedIds.filter((id: string) => existing.indexOf(id) >= 0)
     if (this.records.length === 0) {
       this.exitEditMode()
     }
   }
 
-  private removeRecordFromPage(id: number): void {
-    this.records = this.records.filter((record: LocalVideoRecord) => record.id !== id)
+  private removeRecordFromPage(key: string): void {
+    this.records = this.records.filter((record: PlaybackHistoryViewItem) => record.key !== key)
     this.removeMissingSelections()
   }
 
@@ -659,8 +648,7 @@ struct ContinueWatchingPage {
       return
     }
     try {
-      await this.historyStore.clearAll()
-      await this.unifiedHistoryStore.clearAll()
+      await this.historyRepository.clear()
       this.records = []
       this.exitEditMode()
     } catch (err) {
@@ -826,27 +814,23 @@ struct ContinueWatchingPage {
       return
     }
     const ids = [...this.selectedIds]
-    const removed: LocalVideoRecord[] = []
+    const removed: PlaybackHistoryViewItem[] = []
     for (let i = 0; i < this.records.length; i++) {
-      if (ids.indexOf(this.records[i].id) >= 0) {
+      if (ids.indexOf(this.records[i].key) >= 0) {
         removed.push(this.records[i])
       }
     }
     try {
-      const localIds: number[] = []
       for (let i = 0; i < removed.length; i++) {
-        const record = removed[i]
-        if (record.sourceId === 'local') {
-          await LocalFilePicker.revokeUriPermission(record.fileUri)
-          localIds.push(record.id)
-          const unifiedLocal = await this.findLocalUnifiedHistory(record)
-          if (unifiedLocal !== null) await this.unifiedHistoryStore.deleteById(unifiedLocal.id)
+        const item = removed[i]
+        if (item.sourceId === 'local') {
+          await this.localPlayerExtension.deleteHistory(item.localRecordId)
+          if (item.remoteRecordId > 0) await this.unifiedHistoryStore.deleteById(item.remoteRecordId)
         } else {
-          await this.unifiedHistoryStore.deleteById(-record.id - 2)
+          if (item.remoteRecordId > 0) await this.unifiedHistoryStore.deleteById(item.remoteRecordId)
         }
       }
-      if (localIds.length > 0) await this.historyStore.deleteByIds(localIds)
-      this.records = this.records.filter((record: LocalVideoRecord) => ids.indexOf(record.id) < 0)
+      this.records = this.records.filter((item: PlaybackHistoryViewItem) => ids.indexOf(item.key) < 0)
       this.exitEditMode()
     } catch (err) {
       logger.warn('批量移除播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
@@ -861,55 +845,19 @@ struct ContinueWatchingPage {
 
   private async pickAndOpenVideo(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext
-      const result = await LocalFilePicker.pickVideoFile(context)
-      if (result === null) {
-        return
-      }
-      const record = new LocalVideoRecord()
-      record.fileUri = result.uri
-      record.fileName = result.fileName
-      record.fileSize = result.fileSize
-      await LocalPlaybackLauncher.open(this.getUIContext(), record, [record])
+      await this.localPlayerExtension.openAnotherLocalVideo(this.getUIContext())
     } catch (err) {
       logger.warn('打开本地视频失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
   }
 
-  private async openRecord(record: LocalVideoRecord, fromBeginning: boolean = false): Promise<void> {
-    if (record.sourceId !== 'local') {
-      try {
-        await ProviderPlaybackLauncher.openById(this.getUIContext(), record.sourceId, record.fileKey,
-          fromBeginning ? 0 : record.positionMs, fromBeginning)
-      } catch (err) {
-        logger.warn('打开远程播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
-      }
-      return
+  private async openRecord(item: PlaybackHistoryViewItem, fromBeginning: boolean = false): Promise<void> {
+    try {
+      await ProviderPlaybackLauncher.openById(this.getUIContext(), item.sourceId, item.mediaId,
+        fromBeginning ? 0 : item.positionMs, fromBeginning)
+    } catch (err) {
+      logger.warn('打开播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
-    await LocalPlaybackLauncher.open(this.getUIContext(), record, this.records, fromBeginning)
-  }
-
-  private toDisplayRecord(record: PlaybackHistoryRecord): LocalVideoRecord {
-    const display = new LocalVideoRecord()
-    display.id = -record.id - 2
-    display.sourceId = record.sourceId
-    display.fileKey = record.mediaId
-    display.fileName = record.title.length > 0 ? record.title : record.mediaId
-    display.coverUri = record.artwork
-    display.positionMs = record.positionMs
-    display.durationMs = record.durationMs
-    display.lastPlayedAt = record.lastPlayedAt
-    return display
-  }
-
-  /** 兼容迁移前使用 URI 复合键的本地统一历史。 */
-  private async findLocalUnifiedHistory(record: LocalVideoRecord): Promise<PlaybackHistoryRecord | null> {
-    const opaqueId = LocalPlaybackIdentity.fromRecord(record)
-    const current = await this.unifiedHistoryStore.get('local', opaqueId)
-    if (current !== null) return current
-    const legacyKey = typeof record.fileKey === 'string' ? record.fileKey.trim() : ''
-    return legacyKey.length > 0 && legacyKey !== opaqueId
-      ? await this.unifiedHistoryStore.get('local', legacyKey) : null
   }
 
   private formatLastPlayedAt(timestamp: number): string {

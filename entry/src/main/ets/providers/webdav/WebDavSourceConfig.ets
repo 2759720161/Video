@@ -21,7 +21,14 @@ export class WebDavSourceConfigCodec {
     } catch (_) { return null }
   }
 
-  static encode(config: WebDavSourceConfig): string { return JSON.stringify(config) }
+  /** 只持久化非敏感字段；旧 password 字段仍由 decode 读取供迁移使用。 */
+  static encode(config: WebDavSourceConfig): string {
+    return JSON.stringify({
+      baseUrl: config.baseUrl,
+      userName: config.userName,
+      rootPath: config.rootPath
+    })
+  }
 
   /** 统一持久化格式，避免重启后因尾斜杠或相对根路径导致地址漂移。 */
   static normalize(config: WebDavSourceConfig): boolean {

@@ -5,6 +5,7 @@
     "pages/local/FolderPage",
     "pages/local/ContinueWatchingPage",
     "pages/emby/EmbyLibraryPage",
+    "pages/emby/EmbyDetailPage",
     "pages/sources/SourceManagerPage",
     "pages/sources/AddSourcePage",
     "pages/sources/EmbySourceEditPage",

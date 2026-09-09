@@ -13,11 +13,15 @@ export enum MediaItemType {
 export class MediaItem {
   sourceId: string = ''
   id: string = ''
+  /** 通用浏览父级标识；首页推荐点击浏览时由 Provider 路由解释。 */
+  parentId: string = ''
   title: string = ''
   subtitle: string = ''
   overview: string = ''
   type: MediaItemType = MediaItemType.VIDEO
   poster: string = ''
+  /** 稳定 artwork 引用；poster 仅用于当前运行时展示。 */
+  artworkRef: string = ''
   backdrop: string = ''
   durationMs: number = 0
   positionMs: number = 0

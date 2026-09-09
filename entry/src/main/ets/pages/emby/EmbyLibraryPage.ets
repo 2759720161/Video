@@ -1,4 +1,3 @@
-import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { promptAction } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import { HdsNavigation, HdsNavigationIconOptions, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
@@ -1228,15 +1227,11 @@ struct EmbyLibraryPage {
       return
     }
     if (this.config === null || this.playingItemId.length > 0) return
-    this.playingItemId = item.id
-    try {
-      if (this.sourceId.length === 0) throw new Error('Emby 媒体源未配置')
-      await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, item, this.getPlaybackQueue(item))
-    } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : '无法播放该 Emby 条目' })
-    } finally {
-      this.playingItemId = ''
-    }
+    if (this.sourceId.length === 0) throw new Error('Emby 媒体源未配置')
+    await this.getUIContext().getRouter().pushUrl({
+      url: 'pages/emby/EmbyDetailPage',
+      params: { sourceId: this.sourceId, itemId: item.id }
+    })
   }
 
   private openSettings(): void {
