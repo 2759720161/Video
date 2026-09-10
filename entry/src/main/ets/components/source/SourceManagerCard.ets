@@ -15,6 +15,10 @@ export struct SourceManagerCard {
   @Prop isBuiltIn: boolean = false
   @Prop canBrowse: boolean = false
   @Prop isEnabled: boolean = true
+  @Prop canEdit: boolean = true
+  @Prop userToggleable: boolean = true
+  @Prop userReorderable: boolean = true
+  @Prop userRemovable: boolean = true
   @State private isPressed: boolean = false
   onBrowse?: () => void
   onAction?: (action: SourceActionKind) => void
@@ -41,7 +45,9 @@ export struct SourceManagerCard {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       if (!this.isBuiltIn) {
-        SourceActionSheet({ title: this.source.name, isEnabled: this.isEnabled,
+        SourceActionSheet({ title: this.source.name, isEnabled: this.isEnabled, showEdit: this.canEdit,
+          userToggleable: this.userToggleable, userReorderable: this.userReorderable,
+          userRemovable: this.userRemovable,
           onAction: (action: SourceActionKind) => {
             if (this.onAction) this.onAction(action)
           } })

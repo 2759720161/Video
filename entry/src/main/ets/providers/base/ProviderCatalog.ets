@@ -100,6 +100,10 @@ export class ProviderCatalog {
     local.iconKind = 'folder'
     local.browserRoute = 'pages/local/FolderPage'
     local.supportsMultipleInstances = false
+    local.builtIn = true
+    local.userRemovable = false
+    local.userToggleable = false
+    local.userReorderable = false
     local.capabilities = [ProviderCapability.HOME, ProviderCapability.BROWSE, ProviderCapability.RESUME,
       ProviderCapability.ARTWORK]
     ProviderCatalog.register(local)

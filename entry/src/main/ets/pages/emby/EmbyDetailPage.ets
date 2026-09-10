@@ -136,8 +136,10 @@ struct EmbyDetailPage {
   private DetailMeta(item: EmbyItem): void {
     Column({ space: 8 }) {
       Text(item.name).fontSize(24).fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary')).width('100%')
+        .fontColor($r('app.color.text_primary')).width('100%').maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
       Text(this.metaText(item)).fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
+        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       if (item.overview.length > 0) {
         Text(item.overview).fontSize(14).fontColor($r('app.color.text_primary'))
           .lineHeight(22).width('100%').textAlign(TextAlign.Start)
@@ -379,6 +381,7 @@ struct EmbyDetailPage {
               .fontColor($r('app.color.text_primary')).maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             Text(this.episodeMeta(episode)).fontSize(12).fontColor($r('app.color.text_secondary'))
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
           }.layoutWeight(1).alignItems(HorizontalAlign.Start)
           if (episode.resumePositionMs() > 0) {
             Progress({ value: this.episodeProgress(episode), total: 100, type: ProgressType.Linear })
@@ -439,8 +442,8 @@ struct EmbyDetailPage {
     this.playing = true
     try {
       await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, episode, this.episodeItems)
-    } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : '无法播放该剧集' })
+    } catch (_) {
+      promptAction.showToast({ message: '无法播放该媒体' })
     } finally {
       this.playing = false
     }
@@ -451,8 +454,8 @@ struct EmbyDetailPage {
     this.playing = true
     try {
       await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, item, [item])
-    } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : '无法播放该媒体' })
+    } catch (_) {
+      promptAction.showToast({ message: '无法播放该媒体' })
     } finally {
       this.playing = false
     }

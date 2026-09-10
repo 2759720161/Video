@@ -54,7 +54,7 @@ struct SourceManagerPage {
                   SourceManagerCard({ source: source,
                     providerLabel: this.providerLabel(source),
                     statusText: this.sourceStatus(source),
-                    isBuiltIn: true,
+                    isBuiltIn: this.isBuiltInSource(source),
                     canBrowse: this.hasDescriptorCapability(source, ProviderCapability.BROWSE),
                     isEnabled: source.enabled,
                     onBrowse: () => this.browse(source) })
@@ -66,9 +66,13 @@ struct SourceManagerPage {
                   SourceManagerCard({ source: source,
                     providerLabel: this.providerLabel(source),
                     statusText: this.sourceStatus(source),
-                    isBuiltIn: false,
+                    isBuiltIn: this.isBuiltInSource(source),
                     canBrowse: this.hasDescriptorCapability(source, ProviderCapability.BROWSE),
                     isEnabled: source.enabled,
+                    canEdit: this.canEdit(source),
+                    userToggleable: this.canToggle(source),
+                    userReorderable: this.canReorder(source) && this.reorderableSources().length > 1,
+                    userRemovable: this.canRemove(source),
                     onBrowse: () => this.browse(source),
                     onAction: (action: SourceActionKind) => this.handleSourceAction(source, action) })
                 }, (source: MediaSourceInstance) => 'source_manager_remote_' + source.id)
@@ -99,21 +103,21 @@ struct SourceManagerPage {
       Column({ space: 3 }) {
         Text('调整顺序').fontSize(18).fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
-        Text('拖动排序入口已收口到这里').fontSize(12).fontColor($r('app.color.text_secondary'))
+        Text('使用上移和下移调整来源顺序').fontSize(12).fontColor($r('app.color.text_secondary'))
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       Button('完成').height(36).fontSize(13).fontColor($r('app.color.accent_blue'))
         .backgroundColor(Color.Transparent).onClick(() => this.reorderMode = false)
     }.width('100%').padding({ left: AppSpacing.TINY, right: AppSpacing.TINY, bottom: AppSpacing.SMALL })
-    ForEach(this.remoteSources(), (source: MediaSourceInstance, index: number) => {
+    ForEach(this.reorderableSources(), (source: MediaSourceInstance, index: number) => {
       Row({ space: 10 }) {
         SymbolGlyph($r('sys.symbol.list_bullet')).fontSize(19)
           .fontColor([$r('app.color.text_secondary')])
         Text(source.name).fontSize(AppTypography.BODY).fontColor($r('app.color.text_primary'))
           .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-        Button('↑').width(36).height(36).fontSize(13).backgroundColor(Color.Transparent)
+        Button('上移').width(48).height(36).fontSize(12).backgroundColor(Color.Transparent)
           .enabled(index > 0).onClick(() => this.moveSource(source, -1))
-        Button('↓').width(36).height(36).fontSize(13).backgroundColor(Color.Transparent)
-          .enabled(index < this.remoteSources().length - 1).onClick(() => this.moveSource(source, 1))
+        Button('下移').width(48).height(36).fontSize(12).backgroundColor(Color.Transparent)
+          .enabled(index < this.reorderableSources().length - 1).onClick(() => this.moveSource(source, 1))
       }.width('100%').padding({ left: AppSpacing.CARD_CONTENT, right: AppSpacing.SMALL,
         top: AppSpacing.SMALL, bottom: AppSpacing.SMALL })
         .borderRadius(AppRadius.CARD)
@@ -133,26 +137,26 @@ struct SourceManagerPage {
   }
 
   private async moveSource(source: MediaSourceInstance, delta: number): Promise<void> {
-    const index = this.sources.findIndex((item: MediaSourceInstance) => item.id === source.id)
+    const reorderable = this.reorderableSources()
+    const index = reorderable.findIndex((item: MediaSourceInstance) => item.id === source.id)
     const target = index + delta
-    if (index < 0 || target < 0 || target >= this.sources.length) return
+    if (index < 0 || target < 0 || target >= reorderable.length) return
     try {
-      const other = this.sources[target]
-      // 内置 local 永远固定在首位，不能参与用户来源排序交换。
-      if (this.isBuiltInSource(source) || this.isBuiltInSource(other)) return
+      const other = reorderable[target]
+      if (!this.canReorder(source) || !this.canReorder(other)) return
       await MediaSourceStore.swapOrder(source.id, other.id)
       await this.loadSources()
     } catch (_) { promptAction.showToast({ message: '媒体源排序失败' }) }
   }
 
   private providerLabel(source: MediaSourceInstance): string {
-    if (this.isBuiltInSource(source)) return '本机文件夹'
     const descriptor = ProviderCatalog.get(source.providerType)
+    if (this.isBuiltInSource(source) && source.providerType === 'local') return '本机文件夹'
     return descriptor === null || descriptor.displayName.length === 0 ? source.providerType : descriptor.displayName
   }
 
   private sourceStatus(source: MediaSourceInstance): string {
-    return source.enabled || this.isBuiltInSource(source) ? '' : '已停用'
+    return source.enabled ? '' : '已停用'
   }
 
   private localSources(): MediaSourceInstance[] {
@@ -163,17 +167,21 @@ struct SourceManagerPage {
     return this.sources.filter((source: MediaSourceInstance) => !this.isBuiltInSource(source))
   }
 
+  private reorderableSources(): MediaSourceInstance[] {
+    return this.remoteSources().filter((source: MediaSourceInstance) => this.canReorder(source))
+  }
+
   private handleSourceAction(source: MediaSourceInstance, action: SourceActionKind): void {
     if (action === SourceActionKind.EDIT) {
       if (this.canEdit(source)) this.editSource(source)
     } else if (action === SourceActionKind.TEST) {
       void this.testSource(source)
     } else if (action === SourceActionKind.TOGGLE) {
-      void this.toggleSource(source, !source.enabled)
+      if (this.canToggle(source)) void this.toggleSource(source, !source.enabled)
     } else if (action === SourceActionKind.REORDER) {
-      this.reorderMode = true
+      if (this.canReorder(source) && this.reorderableSources().length > 1) this.reorderMode = true
     } else if (action === SourceActionKind.DELETE) {
-      this.confirmDelete(source)
+      if (this.canRemove(source)) this.confirmDelete(source)
     }
   }
 
@@ -184,7 +192,22 @@ struct SourceManagerPage {
 
   private isBuiltInSource(source: MediaSourceInstance): boolean {
     const descriptor = ProviderCatalog.get(source.providerType)
-    return descriptor !== null && !descriptor.supportsMultipleInstances
+    return descriptor !== null && descriptor.builtIn
+  }
+
+  private canToggle(source: MediaSourceInstance): boolean {
+    const descriptor = ProviderCatalog.get(source.providerType)
+    return descriptor !== null && descriptor.userToggleable
+  }
+
+  private canReorder(source: MediaSourceInstance): boolean {
+    const descriptor = ProviderCatalog.get(source.providerType)
+    return descriptor !== null && descriptor.userReorderable
+  }
+
+  private canRemove(source: MediaSourceInstance): boolean {
+    const descriptor = ProviderCatalog.get(source.providerType)
+    return descriptor !== null && descriptor.userRemovable
   }
 
   private hasDescriptorCapability(source: MediaSourceInstance, capability: ProviderCapability): boolean {
@@ -206,11 +229,13 @@ struct SourceManagerPage {
   }
 
   private async toggleSource(source: MediaSourceInstance, enabled: boolean): Promise<void> {
+    if (!this.canToggle(source)) return
     try { await MediaSourceStore.setEnabled(source.id, enabled); await this.loadSources() }
     catch (_) { promptAction.showToast({ message: '媒体源状态更新失败' }) }
   }
 
   private confirmDelete(source: MediaSourceInstance): void {
+    if (!this.canRemove(source)) return
     this.getUIContext().getPromptAction().showDialog({
       title: '删除媒体源？',
       message: '将移除“' + source.name + '”及其连接配置。',
@@ -224,6 +249,7 @@ struct SourceManagerPage {
   }
 
   private async deleteSource(source: MediaSourceInstance): Promise<void> {
+    if (!this.canRemove(source)) return
     try { await MediaSourceStore.remove(source.id); await this.loadSources(); promptAction.showToast({ message: '已删除媒体源' }) }
     catch (_) { promptAction.showToast({ message: '媒体源删除失败' }) }
   }

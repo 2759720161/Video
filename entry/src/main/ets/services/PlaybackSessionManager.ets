@@ -61,12 +61,15 @@ export class PlaybackSessionManager {
     return this.reportControllers.get(PlaybackSessionManager.trimString(sessionId)) ?? null
   }
 
-  /** 确保临时播放地址在给定窗口内有效；未过期时直接返回当前会话。 */
-  async ensureFreshStream(sessionId: string, windowMs: number = 30000): Promise<PlaybackSession | null> {
+  /**
+   * 确保临时播放地址在给定窗口内有效；force 用于播放器收到 401/403 后的一次性
+   * 重新解析。未过期且未强制刷新时直接返回当前会话。
+   */
+  async ensureFreshStream(sessionId: string, windowMs: number = 30000, force: boolean = false): Promise<PlaybackSession | null> {
     const id = PlaybackSessionManager.trimString(sessionId)
     const current = this.sessions.get(id)
     const resolver = this.resolvers.get(id)
-    if (current === undefined || resolver === undefined || !current.stream.isExpiringSoon(windowMs)) {
+    if (current === undefined || resolver === undefined || (!force && !current.stream.isExpiringSoon(windowMs))) {
       return current ?? null
     }
     const index = current.queueIndex >= 0 && current.queueIndex < current.queue.length ? current.queueIndex : 0

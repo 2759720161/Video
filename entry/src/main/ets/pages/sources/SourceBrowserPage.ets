@@ -37,6 +37,7 @@ struct SourceBrowserPage {
   @State private pressedItemKey: string = ''
   private loadGeneration: number = 0
   private searchGeneration: number = 0
+  private breadcrumbScroller: Scroller = new Scroller()
 
   aboutToAppear(): void {
     const params = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined
@@ -109,7 +110,7 @@ struct SourceBrowserPage {
         Blank().layoutWeight(1)
         SymbolGlyph($r('sys.symbol.more'))
           .fontSize(22).fontColor([$r('app.color.text_secondary')])
-          .width(44).height(34)
+          .width(44).height(44)
           .onClick(() => this.openToolbarMenu())
       }.width('100%')
     }.width('100%').constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
@@ -122,7 +123,7 @@ struct SourceBrowserPage {
   @Builder
   private BreadcrumbBar(): void {
     if (this.breadcrumbs.length > 0) {
-      Scroll() {
+      Scroll(this.breadcrumbScroller) {
         Row({ space: 5 }) {
           ForEach(this.breadcrumbs, (item: BrowserBreadcrumbItem, index: number) => {
             if (index > 0) {
@@ -133,15 +134,29 @@ struct SourceBrowserPage {
               .fontWeight(index === this.breadcrumbs.length - 1 ? FontWeight.Medium : FontWeight.Normal)
               .fontColor(index === this.breadcrumbs.length - 1 ? $r('app.color.text_primary') : $r('app.color.accent_blue'))
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+              // 非当前层级可点击返回，保持和其他图标控件一致的最小触控区。
+              .height(44).padding({ left: 2, right: 2 })
+              .textAlign(TextAlign.Center)
               .onClick(() => {
                 if (index < this.breadcrumbs.length - 1) this.openBreadcrumb(item)
               })
-          }, (item: BrowserBreadcrumbItem) => 'breadcrumb_' + item.id + '_' + item.title)
+          // 同名目录或 Provider 返回重复 id 时仍需保证渲染节点唯一；路径位置是
+          // 面包屑身份的一部分，避免点击后复用到错误的目录节点。
+          }, (item: BrowserBreadcrumbItem, index: number) => 'breadcrumb_' + index + '_' + item.id + '_' + item.title)
         }
       }
       .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
       .width('100%').padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE, bottom: AppSpacing.SMALL })
+      .onAppear(() => this.scrollBreadcrumbToCurrent())
     }
+  }
+
+  /** 深层目录首次进入时把当前层级定位到水平面包屑的可视区域。 */
+  private scrollBreadcrumbToCurrent(): void {
+    if (this.breadcrumbs.length <= 1) return
+    setTimeout(() => {
+      this.breadcrumbScroller.scrollEdge(Edge.End)
+    }, 0)
   }
 
   @Builder
@@ -159,7 +174,9 @@ struct SourceBrowserPage {
       this.ItemThumbnail(item, 64, 48)
       Column({ space: 4 }) {
         Text(item.title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
-        if (item.subtitle.length > 0) Text(item.subtitle).fontSize(13).fontColor($r('app.color.text_secondary')).maxLines(2)
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (item.subtitle.length > 0) Text(item.subtitle).fontSize(13).fontColor($r('app.color.text_secondary'))
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(16).fontColor([$r('app.color.text_secondary')])
     }.width('100%').padding(14).borderRadius(12)
@@ -299,8 +316,8 @@ struct SourceBrowserPage {
       }
       const playable = this.items.filter((value: MediaItem) => value.playable)
       await ProviderPlaybackLauncher.open(this.getUIContext(), item, playable)
-    } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : '无法打开媒体' })
+    } catch (_) {
+      promptAction.showToast({ message: '无法播放该媒体' })
     }
   }
 

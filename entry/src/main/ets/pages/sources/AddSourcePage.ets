@@ -97,6 +97,8 @@ struct AddSourcePage {
         Column({ space: 3 }) {
           Text(descriptor.displayName).fontSize(17).fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(this.subtitle(descriptor)).fontSize(13).fontColor($r('app.color.text_secondary'))
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
@@ -110,7 +112,7 @@ struct AddSourcePage {
           .fontColor(descriptor.enabled ? $r('app.color.accent_blue') : $r('app.color.text_secondary'))
       }.width('100%')
     }
-    .width('100%').padding(16).borderRadius(14)
+    .width('100%').height(174).padding(16).borderRadius(14)
     .backgroundColor($r('app.color.card_background'))
     .border({ width: 0.5, color: $r('app.color.card_specular_border') })
     .enabled(descriptor.enabled)

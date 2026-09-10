@@ -89,6 +89,8 @@ struct EmbySourceEditPage {
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
         Text(this.connectionSubtitle())
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))

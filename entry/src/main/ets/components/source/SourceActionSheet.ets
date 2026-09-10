@@ -14,6 +14,10 @@ export enum SourceActionKind {
 export struct SourceActionSheet {
   @Prop title: string = ''
   @Prop isEnabled: boolean = true
+  @Prop showEdit: boolean = true
+  @Prop userToggleable: boolean = true
+  @Prop userReorderable: boolean = true
+  @Prop userRemovable: boolean = true
   onAction?: (action: SourceActionKind) => void
 
   build() {
@@ -28,19 +32,32 @@ export struct SourceActionSheet {
 
   private openActionMenu(): void {
     try {
+      const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?,
+        promptAction.Button?, promptAction.Button?] = [
+        { text: '测试连接', color: $r('app.color.text_primary') }
+      ]
+      const actions: SourceActionKind[] = [SourceActionKind.TEST]
+      if (this.showEdit) {
+        buttons.unshift({ text: '编辑', color: $r('app.color.text_primary') })
+        actions.unshift(SourceActionKind.EDIT)
+      }
+      if (this.userToggleable) {
+        buttons.push({ text: this.isEnabled ? '停用媒体源' : '启用媒体源', color: $r('app.color.text_primary') })
+        actions.push(SourceActionKind.TOGGLE)
+      }
+      if (this.userReorderable) {
+        buttons.push({ text: '调整顺序', color: $r('app.color.text_primary') })
+        actions.push(SourceActionKind.REORDER)
+      }
+      if (this.userRemovable) {
+        buttons.push({ text: '删除媒体源', color: $r('app.color.status_error') })
+        actions.push(SourceActionKind.DELETE)
+      }
       this.getUIContext().getPromptAction().showActionMenu({
         title: this.title,
-        buttons: [
-          { text: '编辑', color: $r('app.color.text_primary') },
-          { text: '测试连接', color: $r('app.color.text_primary') },
-          { text: this.isEnabled ? '停用媒体源' : '启用媒体源', color: $r('app.color.text_primary') },
-          { text: '调整顺序', color: $r('app.color.text_primary') },
-          { text: '删除媒体源', color: $r('app.color.status_error') }
-        ]
+        buttons: buttons
       }, (err: BusinessError, result: promptAction.ActionMenuSuccessResponse) => {
         if (err !== undefined) return
-        const actions: SourceActionKind[] = [SourceActionKind.EDIT, SourceActionKind.TEST,
-          SourceActionKind.TOGGLE, SourceActionKind.REORDER, SourceActionKind.DELETE]
         if (result.index >= 0 && result.index < actions.length && this.onAction) {
           this.onAction(actions[result.index])
         }

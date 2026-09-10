@@ -241,6 +241,7 @@ struct PlayerPage {
   private streamRefreshInFlight: Promise<void> | null = null
   private streamRefreshFailureKey: string = ''
   private streamRefreshFailureShown: boolean = false
+  private streamAuthRetryMediaKey: string = ''
   @State isAnimatingFullscreen: boolean = false
   @State suppressControlAnimation: boolean = false
   @State hideBottomControlsForFullscreenTransition: boolean = false
@@ -618,12 +619,12 @@ struct PlayerPage {
   }
 
   /** 临时直链在进入页面或回到前台时提前刷新，避免播放器拿到已过期 URL。 */
-  private async refreshExpiringStream(): Promise<void> {
+  private async refreshExpiringStream(force: boolean = false): Promise<void> {
     if (this.streamRefreshInFlight !== null) {
       await this.streamRefreshInFlight
       return
     }
-    const task = this.refreshExpiringStreamInternal()
+    const task = this.refreshExpiringStreamInternal(force)
     this.streamRefreshInFlight = task
     try {
       await task
@@ -632,14 +633,14 @@ struct PlayerPage {
     }
   }
 
-  private async refreshExpiringStreamInternal(): Promise<void> {
+  private async refreshExpiringStreamInternal(force: boolean = false): Promise<void> {
     const current = this.session
     if (!this.isPageAlive || current === null) return
     current.startPositionMs = PlaybackQueueItem.normalizePositionMs(this.positionMs)
-    const failureKey = current.media.sourceId + '|' + current.media.mediaId + '|' + current.stream.expiresAt
+    const failureKey = (force ? 'force|' : '') + current.media.sourceId + '|' + current.media.mediaId + '|' + current.stream.expiresAt
     if (this.streamRefreshFailureKey === failureKey) return
     try {
-      const refreshed = await this.sessionManager.ensureFreshStream(this.sessionId, 30000)
+      const refreshed = await this.sessionManager.ensureFreshStream(this.sessionId, 30000, force)
       if (refreshed === null || refreshed === current || !this.isPageAlive || this.session !== current) return
       this.applySession(refreshed)
       this.playbackOptions = this.withPlaybackIdentity(
@@ -658,6 +659,19 @@ struct PlayerPage {
       }
       logger.warn('刷新临时播放地址失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
+  }
+
+  /** 认证失败只为当前媒体重新解析一次，防止失效凭据造成无限重试。 */
+  private retryStreamAfterAuthorizationFailure(errorText: string): void {
+    if (this.isLocalSource || !/(401|403|unauthori[sz]ed|forbidden)/i.test(errorText)) {
+      return
+    }
+    const current = this.session
+    if (current === null) return
+    const mediaKey = current.media.sourceId + '|' + current.media.mediaId
+    if (this.streamAuthRetryMediaKey === mediaKey) return
+    this.streamAuthRetryMediaKey = mediaKey
+    void this.refreshExpiringStream(true)
   }
 
   private cloneCurrentPlaybackOptions(): PlaybackOptions {
@@ -2573,6 +2587,7 @@ struct PlayerPage {
       this.playbackErrorText = this.isLocalSource ? '本地文件访问失败，请重新授权或重新选择' :
         '远程视频加载失败，请检查网络或媒体源连接'
       this.showHudText(this.isLocalSource ? '本地文件访问失败' : '远程视频加载失败')
+      this.retryStreamAfterAuthorizationFailure(state.error)
     } else if (this.playbackErrorText.length > 0 && state.playing) {
       this.playbackErrorText = ''
     }
@@ -3678,9 +3693,10 @@ struct PlayerPage {
     const contentWidth = this.videoWidth > 0 ? this.videoWidth : 1920
     const contentHeight = this.videoHeight > 0 ? this.videoHeight : 1080
     const isWideContent = contentWidth > contentHeight
-    const controlGroups: Array<PiPWindow.VideoPlayControlGroup> = [
+    // 单文件不申请系统的上一项/下一项控件，避免展示无意义的禁用按钮。
+    const controlGroups: Array<PiPWindow.VideoPlayControlGroup> = this.playbackQueue.length > 1 ? [
       PiPWindow.VideoPlayControlGroup.VIDEO_PREVIOUS_NEXT
-    ]
+    ] : []
     const success = await this.pipManager.createAndStart(
       context, this.xComponentController, contentWidth, contentHeight, controlGroups,
       isWideContent ? 2 : 1)
@@ -3689,7 +3705,7 @@ struct PlayerPage {
       this.isRestoringFromPiP = false
       this.isPiPActive = true
       this.pipManager.updatePlaybackState(this.isPlaying)
-      this.pipManager.setNextPreviousEnabled(false, false)
+      this.syncPiPQueueControls()
     }
     return success
   }
@@ -3761,6 +3777,14 @@ struct PlayerPage {
       this.durationMs > 0 ? this.durationMs : this.historyDurationMs, mediaPositionMs,
       this.currentQueueIndex >= 0 && this.currentQueueIndex < this.playbackQueue.length - 1,
       this.currentQueueIndex > 0, this.isLocalSource, PLAYER_OWNER_ID)
+    this.syncPiPQueueControls()
+  }
+
+  /** PiP only exposes usable queue actions, and updates them as the active item changes. */
+  private syncPiPQueueControls(): void {
+    const hasNext = this.currentQueueIndex >= 0 && this.currentQueueIndex < this.playbackQueue.length - 1
+    const hasPrevious = this.currentQueueIndex > 0 && this.currentQueueIndex < this.playbackQueue.length
+    this.pipManager.setNextPreviousEnabled(hasNext, hasPrevious)
   }
 
   private buildPiPCallbacks(): PiPCallbacks {
@@ -3789,6 +3813,8 @@ struct PlayerPage {
         this.seekTo(Math.max(this.positionMs - normalizeSeekSeconds(this.playerSeekSeconds) * 1000, 0))
       }
     }
+    callbacks.onNext = () => { void this.playNextQueueItem(false) }
+    callbacks.onPrevious = () => { this.playPreviousQueueItem() }
     callbacks.onRestore = () => {
       this.isPageAlive = true
       this.keepPlaybackForPiP = false
@@ -4632,6 +4658,8 @@ struct PlayerPage {
     this.sessionSubtitleLoadToken++
     this.sessionSubtitleLoadedForUrl = ''
     this.stopExternalSubtitleClock()
+    // 外挂弹幕属于当前媒体，不得在队列切换后叠加到下一条视频。
+    this.clearDanmakuState()
     this.availableTracks = []
     this.tracksLoadedForUrl = ''
     this.videoInfoLoadedForUrl = ''

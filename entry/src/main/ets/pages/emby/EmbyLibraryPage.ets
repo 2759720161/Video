@@ -576,8 +576,8 @@ struct EmbyLibraryPage {
     try {
       const item = await this.provider.getItemRaw(itemId)
       if (item !== null && !item.isFolder) await this.openItem(item)
-    } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : '无法打开远程播放记录' })
+    } catch (_) {
+      promptAction.showToast({ message: '无法播放该媒体' })
     }
   }
 
@@ -899,8 +899,8 @@ struct EmbyLibraryPage {
     }
     try {
       await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, item, [item])
-    } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : '无法继续播放该媒体' })
+    } catch (_) {
+      promptAction.showToast({ message: '无法播放该媒体' })
     }
   }
 

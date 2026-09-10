@@ -8,8 +8,10 @@ export struct PlayerSettingRow {
   build() {
     Row({ space: 10 }) {
       Text(this.title).fontSize(14).fontColor($r('app.color.text_primary')).layoutWeight(1)
+        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       if (this.value.length > 0) {
         Text(this.value).fontSize(13).fontColor($r('app.color.text_secondary'))
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(16)
         .fontColor([$r('app.color.text_secondary')])

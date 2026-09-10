@@ -26,7 +26,16 @@ export class ProviderDescriptor {
   addRoute: string = ''
   editRoute: string = ''
   browserRoute: string = ''
+  /** 仅描述该 Provider 是否允许创建多个来源实例。 */
   supportsMultipleInstances: boolean = true
+  /** 内置来源与“单实例”无关；内置来源通常不展示用户管理菜单。 */
+  builtIn: boolean = false
+  /** 用户是否可以删除该 Provider 的来源实例。 */
+  userRemovable: boolean = true
+  /** 用户是否可以启用或停用该 Provider 的来源实例。 */
+  userToggleable: boolean = true
+  /** 用户是否可以在来源管理中调整该 Provider 的来源实例顺序。 */
+  userReorderable: boolean = true
   enabled: boolean = true
   capabilities: ProviderCapability[] = []
 
