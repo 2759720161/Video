@@ -3,10 +3,11 @@ import { router } from '@kit.ArkUI'
 import { buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
 import { ProviderDescriptor } from '../../providers/base/ProviderDescriptor'
-import { getContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
+import { getManagementContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { ProviderIcon } from '../../components/source/ProviderIcon'
 import { PageEmptyState } from '../../components/common/PageEmptyState'
+import { AppMotion } from '../../ui/theme/AppMotion'
 
 class ProviderCategoryGroup {
   category: string = ''
@@ -52,7 +53,7 @@ struct AddSourcePage {
           }
         }
         .width('100%')
-        .constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+        .constraintSize({ maxWidth: getManagementContentMaxWidth(this.screenWidthVp) || '100%' })
         .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
           right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
           bottom: AppSpacing.SECTION })
@@ -107,9 +108,13 @@ struct AddSourcePage {
         .maxLines(2).width('100%').textOverflow({ overflow: TextOverflow.Ellipsis })
       Row() {
         Blank().layoutWeight(1)
-        Text(descriptor.enabled ? '添加' : (descriptor.comingSoonText.length > 0 ? descriptor.comingSoonText : '即将支持'))
-          .fontSize(13)
-          .fontColor(descriptor.enabled ? $r('app.color.accent_blue') : $r('app.color.text_secondary'))
+        if (descriptor.enabled) {
+          SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(20)
+            .fontColor([$r('app.color.accent_blue')])
+        } else {
+          Text(descriptor.comingSoonText.length > 0 ? descriptor.comingSoonText : '即将支持')
+            .fontSize(13).fontColor($r('app.color.text_secondary'))
+        }
       }.width('100%')
     }
     .width('100%').height(174).padding(16).borderRadius(14)
@@ -118,7 +123,7 @@ struct AddSourcePage {
     .enabled(descriptor.enabled)
     .opacity(descriptor.enabled ? (this.pressedProviderType === descriptor.type ? 0.86 : 1) : 0.6)
     .scale({ x: this.providerCardScale(descriptor.type), y: this.providerCardScale(descriptor.type) })
-    .animation({ duration: 140, curve: Curve.EaseOut })
+    .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => this.handleProviderTouch(descriptor.type, event))
     .onClick(() => { if (descriptor.enabled) router.pushUrl({ url: descriptor.addRoute }) })
   }

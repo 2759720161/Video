@@ -9,7 +9,7 @@ import { EmbySourceConfigCodec } from '../../providers/emby/EmbySourceConfig'
 import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { PreferencesStore } from '../../store/PreferencesStore'
 import { buildImmersiveTitleBarStyle, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL,
-  getTopSpacerHeight, getContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
+  getTopSpacerHeight, getMediaContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
@@ -18,7 +18,10 @@ import { InlineLoadingState } from '../../components/common/InlineLoadingState'
 import { ContinueWatchingCard } from '../../components/media/ContinueWatchingCard'
 import { MediaPosterCard } from '../../components/media/MediaPosterCard'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
-import { MediaProgressBar } from '../../components/media/MediaProgressBar'
+import { MediaHero } from '../../components/media/MediaHero'
+import { MediaShortcutTile } from '../../components/navigation/MediaShortcutTile'
+import { AppDimensions } from '../../ui/theme/AppDimensions'
+import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
 
 const EMBY_HOME_CACHE_KEY_PREFIX: string = 'embyHomeCacheV1_'
 
@@ -141,7 +144,7 @@ struct EmbyLibraryPage {
           Blank().height(this.bottomSafeHeight + 28).width('100%')
           }
           .width('100%')
-          .constraintSize({ minHeight: '100%', maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+          .constraintSize({ minHeight: '100%', maxWidth: getMediaContentMaxWidth(this.screenWidthVp) || '100%' })
           .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
             right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE })
           .alignItems(HorizontalAlign.Center)
@@ -262,6 +265,10 @@ struct EmbyLibraryPage {
         this.HomeMediaSection('继续观看', this.resumeItems, 'resume')
       }
 
+      if (this.items.length > 0) {
+        this.LibraryTilesSection()
+      }
+
       if (this.latestItems.length > 0) {
         this.HomeMediaSection('最近添加', this.latestItems, 'latest')
       }
@@ -282,46 +289,44 @@ struct EmbyLibraryPage {
 
   @Builder
   private FeaturedHero(item: EmbyItem): void {
-    Stack({ alignContent: Alignment.BottomStart }) {
-      if (this.heroUsesPoster(item)) {
-        Image(this.heroImageUrl(item, 1000))
-          .width('100%').height(280).objectFit(ImageFit.Cover)
-          .blur(18).opacity(0.42).draggable(false)
-        Image(this.heroImageUrl(item, 1000))
-          .width('100%').height(280).objectFit(ImageFit.Contain).draggable(false)
-      } else if (this.heroImageUrl(item, 1000).length > 0) {
-        Image(this.heroImageUrl(item, 1000))
-          .width('100%').height(280).objectFit(ImageFit.Cover).draggable(false)
-      } else {
-        Column() {
-          SymbolGlyph($r('sys.symbol.play_round_rectangle')).fontSize(52)
-            .fontColor([$r('app.color.text_secondary')])
+    MediaHero({
+      title: item.name,
+      subtitle: item.subtitle(),
+      artworkUrl: this.heroImageUrl(item, 1000),
+      positionMs: item.resumePositionMs(),
+      durationMs: item.durationMs(),
+      heightVp: isTabletLayout(this.screenWidthVp) ? AppDimensions.HERO_TABLET_HEIGHT : AppDimensions.HERO_PHONE_HEIGHT,
+      widthVp: this.pageWidth,
+      actionText: this.featuredActionLabel(item),
+      usePosterFallback: this.heroUsesPoster(item),
+      onPlay: () => { void this.openFeaturedItem(item) }
+    })
+  }
+
+  @Builder
+  private LibraryTilesSection(): void {
+    Column({ space: 10 }) {
+      MediaSectionHeader({ title: '媒体库' })
+      Scroll() {
+        Row({ space: 10 }) {
+          ForEach(this.items, (library: EmbyItem) => {
+            MediaShortcutTile({
+              title: library.name,
+              subtitle: library.collectionType.length > 0 ? library.collectionType : '浏览媒体',
+              iconKind: 'folder',
+              tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.pageWidth),
+              tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.pageWidth),
+              onClickAction: () => this.openSection(library.id, library.name, library.collectionType)
+            })
+          }, (library: EmbyItem) => 'emby_library_tile_' + library.id)
         }
-        .width('100%').height(280).justifyContent(FlexAlign.Center)
+        .padding({ right: this.pagePadding() })
       }
-      Column()
-        .width('100%').height(280)
-        .linearGradient({ direction: GradientDirection.Bottom,
-          colors: [['#00000000', 0.18], [$r('app.color.page_background_media'), 1]] })
-      Column({ space: 7 }) {
-        Text(item.name).fontSize(25).fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary')).maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
-        Text(item.subtitle()).fontSize(13).fontColor($r('app.color.text_secondary'))
-          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
-        if (item.resumePositionMs() > 0) {
-          MediaProgressBar({ positionMs: item.resumePositionMs(), durationMs: item.durationMs() })
-            .width('100%')
-        }
-        Button(this.featuredActionLabel(item)).height(40).fontSize(14)
-          .fontColor($r('app.color.text_on_primary')).backgroundColor($r('app.color.accent_blue'))
-          .borderRadius(20).onClick(() => { void this.openFeaturedItem(item) })
-      }
-      .width('100%').padding({ left: 20, right: 20, bottom: 18 })
-      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
     }
-    .width('100%').height(280).clip(true).borderRadius(18)
-    .backgroundColor($r('app.color.card_background'))
+    .width('100%')
   }
 
   @Builder
@@ -338,7 +343,9 @@ struct EmbyLibraryPage {
               this.ResumeMediaCard(item)
             } else {
               MediaPosterCard({ title: item.name, subtitle: item.subtitle(),
-                artworkUrl: this.itemImageUrl(item, 500), onCardClick: () => this.openItem(item) })
+                artworkUrl: this.itemImageUrl(item, 500),
+                cardWidth: ResponsiveSizeClassResolver.posterWidth(this.pageWidth),
+                onCardClick: () => this.openItem(item) })
             }
           }, (item: EmbyItem) => sectionId + '_' + item.id)
         }
@@ -355,7 +362,9 @@ struct EmbyLibraryPage {
   private ResumeMediaCard(item: EmbyItem): void {
     ContinueWatchingCard({ title: item.name, subtitle: item.subtitle(),
       artworkUrl: this.itemImageUrl(item, 700), positionMs: item.resumePositionMs(),
-      durationMs: item.durationMs(), onCardClick: () => { void this.openResumeItem(item) } })
+      durationMs: item.durationMs(),
+      cardWidth: ResponsiveSizeClassResolver.landscapeWidth(this.pageWidth),
+      onCardClick: () => { void this.openResumeItem(item) } })
   }
 
   @Builder
@@ -458,7 +467,9 @@ struct EmbyLibraryPage {
             this.ResumeMediaCard(item)
           } else {
             MediaPosterCard({ title: item.name, subtitle: item.subtitle(),
-              artworkUrl: this.itemImageUrl(item, 700), onCardClick: () => this.openItem(item) })
+              artworkUrl: this.itemImageUrl(item, 700),
+              cardWidth: ResponsiveSizeClassResolver.posterWidth(this.pageWidth),
+              onCardClick: () => this.openItem(item) })
           }
         }
       }, (item: EmbyItem) => 'poster_' + item.id)
@@ -974,11 +985,10 @@ struct EmbyLibraryPage {
   }
 
   private posterColumns(): string {
-    if (this.pageWidth >= 1100) return '1fr 1fr 1fr 1fr 1fr 1fr'
-    if (this.pageWidth >= 840) return '1fr 1fr 1fr 1fr 1fr'
-    if (this.pageWidth >= 600) return '1fr 1fr 1fr 1fr'
-    if (this.pageWidth >= 410) return '1fr 1fr 1fr'
-    return '1fr 1fr'
+    const count = ResponsiveSizeClassResolver.columns(this.pageWidth)
+    let template = '1fr'
+    for (let i = 1; i < count; i++) template += ' 1fr'
+    return template
   }
 
 }

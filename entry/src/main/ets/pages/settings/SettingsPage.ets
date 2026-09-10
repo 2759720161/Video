@@ -10,6 +10,9 @@ import {
   HDS_MATERIAL_LEVEL_DEFAULT,
   PREFS_KEY_HDS_MATERIAL_LEVEL
 } from '../../utils/HdsPageStyle'
+import { AppSpacing } from '../../ui/theme/AppSpacing'
+import { SettingsGroup } from '../../components/settings/SettingsGroup'
+import { SettingsRow } from '../../components/settings/SettingsRow'
 
 @Component
 export struct SettingsPage {
@@ -39,7 +42,7 @@ export struct SettingsPage {
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
-        .padding({ left: 12, right: 12 })
+        .padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE })
         .constraintSize({ minHeight: '100%' })
       }
       .width('100%')
@@ -62,50 +65,34 @@ export struct SettingsPage {
   @Builder private SettingsSection(): void {
     Column() {
       this.SectionHeader('播放器')
-      Column() {
+      SettingsGroup() {
         this.RouteItem($r('sys.symbol.play_round_rectangle'), '播放', 'pages/settings/PlayerSettingsPage')
         this.Divider()
         this.RouteItem($r('sys.symbol.doc_text'), '字幕', 'pages/settings/SubtitleSettingsPage')
         this.Divider()
         this.RouteItem($r('sys.symbol.moon'), '外观动效', 'pages/settings/AppearanceSettingsPage')
       }
-      .width('100%').borderRadius(12).clip(true)
-      .backgroundColor($r('app.color.card_background'))
-      .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-      .shadow({ radius: 10, color: $r('app.color.shadow_surface'), offsetY: 3 })
 
       this.SectionHeader('媒体源')
-      Column() {
+      SettingsGroup() {
         this.RouteItem($r('sys.symbol.play_round_rectangle'), '媒体源', 'pages/sources/SourceManagerPage')
       }
-      .width('100%').borderRadius(12).clip(true)
-      .backgroundColor($r('app.color.card_background'))
-      .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-      .shadow({ radius: 10, color: $r('app.color.shadow_surface'), offsetY: 3 })
 
       this.SectionHeader('工具')
-      Column() {
+      SettingsGroup() {
         this.RouteItem($r('sys.symbol.arrow_down_circle'), 'm3u8 转 MP4', 'pages/tools/M3u8ConverterPage')
       }
-      .width('100%').borderRadius(12).clip(true)
-      .backgroundColor($r('app.color.card_background'))
-      .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-      .shadow({ radius: 10, color: $r('app.color.shadow_surface'), offsetY: 3 })
     }.width('100%').margin({ bottom: 8 })
   }
 
   @Builder private AboutSection(): void {
     Column() {
       this.SectionHeader('关于')
-      Column() {
+      SettingsGroup() {
         this.InfoItem($r('sys.symbol.info_circle'), '版本信息', this.appVersion)
         this.Divider()
         this.ActionItem($r('sys.symbol.star_fill'), '给个好评', () => this.openReview())
       }
-      .width('100%').borderRadius(12).clip(true)
-      .backgroundColor($r('app.color.card_background'))
-      .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-      .shadow({ radius: 10, color: $r('app.color.shadow_surface'), offsetY: 3 })
     }.width('100%').margin({ bottom: 8 })
   }
 
@@ -125,34 +112,11 @@ export struct SettingsPage {
   }
 
   @Builder private InfoItem(icon: Resource, title: string, value: string = ''): void {
-    Row() {
-      this.SettingIcon(icon)
-      this.SettingTitle(title)
-      if (value.length > 0) {
-        Text(value).fontSize(14).fontColor($r('app.color.text_secondary')).margin({ right: 10 })
-      }
-    }.width('100%').height(56).padding({ left: 16, right: 16 })
+    SettingsRow({ icon: icon, title: title, value: value, showChevron: false })
   }
 
   @Builder private ActionItem(icon: Resource, title: string, action: () => void): void {
-    Row() {
-      this.SettingIcon(icon)
-      this.SettingTitle(title)
-      SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(16).fontColor([$r('sys.color.icon_secondary')])
-    }
-    .width('100%').height(56).padding({ left: 16, right: 16 }).borderRadius(12)
-    .onClick(action)
-    .stateStyles({ pressed: { .backgroundColor($r('app.color.category_menu_item_selected')) }, normal: { .backgroundColor(Color.Transparent) } })
-  }
-
-  @Builder private SettingIcon(icon: Resource): void {
-    SymbolGlyph(icon).fontSize(24).fontColor([$r('app.color.accent_blue')]).width(34).margin({ right: 12 })
-  }
-
-  @Builder private SettingTitle(title: string): void {
-    Column() {
-      Text(title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary')).maxLines(1)
-    }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+    SettingsRow({ icon: icon, title: title, onRowClick: action })
   }
 
   private async openReview(): Promise<void> {

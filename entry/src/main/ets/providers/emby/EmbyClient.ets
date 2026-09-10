@@ -221,13 +221,16 @@ export class EmbyClient {
     const playSessionId = info.playSessionId.length > 0 ? info.playSessionId : EmbyClient.createSessionId()
     let url = ''
     let playMethod = 'DirectStream'
-    if (playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directPlayUrl.length > 0) {
-      url = this.absoluteUrl(source.directPlayUrl)
-      playMethod = 'DirectPlay'
-    }
-    if (url.length === 0 && playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directStreamUrl.length > 0) {
+    // DirectPlayUrl can point at a storage path reachable by the server but
+    // not by a phone. Prefer the server-mediated direct stream, which still
+    // avoids transcoding while preserving the authenticated Emby route.
+    if (playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directStreamUrl.length > 0) {
       url = this.absoluteUrl(source.directStreamUrl)
       playMethod = 'DirectStream'
+    }
+    if (url.length === 0 && playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directPlayUrl.length > 0) {
+      url = this.absoluteUrl(source.directPlayUrl)
+      playMethod = 'DirectPlay'
     }
     if (url.length === 0 && playbackMode !== EmbyPlaybackMode.DIRECT && source.transcodingUrl.length > 0) {
       url = this.absoluteUrl(source.transcodingUrl)
@@ -235,7 +238,10 @@ export class EmbyClient {
     }
     if (url.length === 0) {
       const container = EmbyClient.safeContainer(source.container.length > 0 ? source.container : item.container)
-    url = this.config.baseUrl + '/Videos/' + encodeURIComponent(item.id) + '/stream/' + container +
+      // Emby's static stream endpoint uses the container as a file extension
+      // (`stream.mkv`), not a path segment (`stream/mkv`). The latter is a
+      // valid-looking URL but is answered with HTTP 404 by Emby.
+      url = this.config.baseUrl + '/Videos/' + encodeURIComponent(item.id) + '/stream.' + container +
       '?static=true&MediaSourceId=' + encodeURIComponent(mediaSourceId) +
       '&PlaySessionId=' + encodeURIComponent(playSessionId)
       if (playbackMode === EmbyPlaybackMode.TRANSCODE) {
@@ -252,7 +258,7 @@ export class EmbyClient {
     route.mediaSourceId = mediaSourceId
     route.playSessionId = playSessionId
     route.playMethod = playMethod
-    route.requiredHttpHeaders = source.requiredHttpHeaders
+    route.requiredHttpHeaders = this.buildPlaybackHeaders(source.requiredHttpHeaders)
     route.context.itemId = item.id
     route.context.mediaSourceId = mediaSourceId
     route.context.playSessionId = playSessionId
@@ -408,6 +414,39 @@ export class EmbyClient {
       return (marker >= 0 ? this.config.baseUrl.substring(0, marker) : this.config.baseUrl) + path
     }
     return this.config.baseUrl + (path.startsWith('/') ? path : '/' + path)
+  }
+
+  /**
+   * Playback URLs can be redirected by a reverse proxy, where the api_key
+   * query parameter is not always retained. Keep the server-provided headers
+   * and supply the authenticated Emby headers for the media request too.
+   */
+  private buildPlaybackHeaders(requiredHeaders: Record<string, string>): Record<string, string> {
+    const headers: Record<string, string> = {}
+    const keys = Object.keys(requiredHeaders)
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i].trim()
+      const value = requiredHeaders[keys[i]].trim()
+      if (key.length > 0 && value.length > 0) {
+        headers[key] = value
+      }
+    }
+    if (!this.hasHeader(headers, 'X-Emby-Token') && this.config.accessToken.length > 0) {
+      headers['X-Emby-Token'] = this.config.accessToken
+    }
+    if (!this.hasHeader(headers, 'X-Emby-Authorization')) {
+      headers['X-Emby-Authorization'] = this.authorizationHeader(true)
+    }
+    return headers
+  }
+
+  private hasHeader(headers: Record<string, string>, name: string): boolean {
+    const target = name.toLowerCase()
+    const keys = Object.keys(headers)
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i].trim().toLowerCase() === target) return true
+    }
+    return false
   }
 
   static normalizeBaseUrl(value: string): string {

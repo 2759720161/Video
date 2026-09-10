@@ -2,6 +2,7 @@ import { router } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import {
   HdsNavigation,
+  HdsNavigationIconOptions,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode
 } from '@kit.UIDesignKit'
@@ -45,12 +46,15 @@ import { MediaItemType } from '../../core/media/MediaItem'
 import { ProviderCapability } from '../../core/media/ProviderCapabilities'
 import { ProviderHomeSnapshot } from '../../models/ProviderHomeSnapshot'
 import { LibraryHomeCoordinator } from '../../services/library/LibraryHomeCoordinator'
-import { isTabletLayout, getContentMaxWidth } from '../../utils/HdsPageStyle'
+import { isTabletLayout, getMediaContentMaxWidth } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
-import { ContinueWatchingHero } from '../../components/media/ContinueWatchingHero'
+import { AppRadius } from '../../ui/theme/AppRadius'
+import { AppDimensions } from '../../ui/theme/AppDimensions'
+import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
+import { MediaHero } from '../../components/media/MediaHero'
 import { ContinueWatchingCard as V2ContinueWatchingCard } from '../../components/media/ContinueWatchingCard'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
-import { QuickAccessCard } from '../../components/source/QuickAccessCard'
+import { MediaShortcutTile } from '../../components/navigation/MediaShortcutTile'
 import { MediaSourceShortcutCard } from '../../components/source/MediaSourceShortcutCard'
 import { MediaLandscapeCard } from '../../components/media/MediaLandscapeCard'
 import { MediaPosterCard } from '../../components/media/MediaPosterCard'
@@ -224,20 +228,21 @@ export struct LibraryPage {
       this.RemoteHomeSectionV2()
     }
     .width('100%')
-    .constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+    .constraintSize({ maxWidth: getMediaContentMaxWidth(this.screenWidthVp) || '100%' })
   }
 
   @Builder
   private HomeHeroSectionV2(): void {
     if (this.getHeroHistory() !== null) {
-      ContinueWatchingHero({
+      MediaHero({
         title: this.heroTitle(),
         subtitle: this.heroSubtitle(),
         artworkUrl: this.heroArtworkUrl(),
         positionMs: this.heroPositionMs(),
         durationMs: this.heroDurationMs(),
-        heightVp: isTabletLayout(this.screenWidthVp) ? 280 : 196,
-        onHeroPlay: () => this.openHeroHistory()
+        heightVp: isTabletLayout(this.screenWidthVp) ? AppDimensions.HERO_TABLET_HEIGHT : AppDimensions.HERO_PHONE_HEIGHT,
+        widthVp: this.screenWidthVp,
+        onPlay: () => this.openHeroHistory()
       })
         .margin({ top: 12 })
     } else {
@@ -262,11 +267,11 @@ export struct LibraryPage {
         .maxLines(2)
         .width('100%')
       Button('打开视频')
-        .height(38)
+        .height(44)
         .fontSize(14)
         .fontColor($r('app.color.text_on_primary'))
         .backgroundColor($r('app.color.accent_blue'))
-        .borderRadius(12)
+        .borderRadius(AppRadius.BUTTON)
         .onClick(() => {
           void this.openVideoFile()
         })
@@ -294,6 +299,7 @@ export struct LibraryPage {
               artworkUrl: record.artworkUrl,
               positionMs: record.positionMs,
               durationMs: record.durationMs,
+              cardWidth: ResponsiveSizeClassResolver.landscapeWidth(this.screenWidthVp),
               onCardClick: () => {
                 void this.openHistoryRecord(record)
               }
@@ -314,26 +320,34 @@ export struct LibraryPage {
   @Builder
   private QuickAccessSectionV2(): void {
     Column({ space: 10 }) {
-      MediaSectionHeader({ title: '快捷访问', actionText: '', onAction: () => undefined })
+      MediaSectionHeader({ title: '我的媒体', actionText: '', onAction: () => undefined })
       Scroll() {
         Row({ space: 10 }) {
-          QuickAccessCard({ title: '打开视频', subtitle: '选择本地文件', iconKind: 'play',
-            onCardClick: () => {
+          MediaShortcutTile({ title: '打开视频', subtitle: '选择本地文件', iconKind: 'play',
+            tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.screenWidthVp),
+            tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.screenWidthVp),
+            onClickAction: () => {
               void this.openVideoFile()
             } })
-          QuickAccessCard({ title: '本地媒体', subtitle: '应用专属目录', iconKind: 'folder',
-            onCardClick: () => this.openFolderPage() })
+          MediaShortcutTile({ title: '本地媒体', subtitle: '应用专属目录', iconKind: 'folder',
+            tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.screenWidthVp),
+            tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.screenWidthVp),
+            onClickAction: () => this.openFolderPage() })
           ForEach(this.quickAccessSources(), (source: MediaSourceInstance) => {
             MediaSourceShortcutCard({
               title: source.name,
               providerType: source.providerType,
               statusText: this.sourceStatus(source),
               isEnabled: source.enabled || source.providerType === 'local',
+              tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.screenWidthVp),
+              tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.screenWidthVp),
               onCardClick: () => this.openSource(source)
             })
           }, (source: MediaSourceInstance) => 'home_quick_source_' + source.id)
-          QuickAccessCard({ title: '添加媒体源', subtitle: 'Emby / WebDAV', iconKind: 'plus',
-            onCardClick: () => router.pushUrl({ url: 'pages/sources/AddSourcePage' }) })
+          MediaShortcutTile({ title: '添加媒体源', subtitle: 'Emby / WebDAV', iconKind: 'plus',
+            tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.screenWidthVp),
+            tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.screenWidthVp),
+            onClickAction: () => router.pushUrl({ url: 'pages/sources/AddSourcePage' }) })
         }
         .padding({ right: 24 })
       }
@@ -381,6 +395,7 @@ export struct LibraryPage {
         title: item.title,
         subtitle: item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'),
         artworkUrl: item.poster,
+        cardWidth: ResponsiveSizeClassResolver.posterWidth(this.screenWidthVp),
         onCardClick: () => {
           void this.openHomeItem(item)
         }
@@ -392,6 +407,7 @@ export struct LibraryPage {
         artworkUrl: item.poster,
         positionMs: item.positionMs,
         durationMs: item.durationMs,
+        cardWidth: ResponsiveSizeClassResolver.landscapeWidth(this.screenWidthVp),
         onCardClick: () => {
           void this.openHomeItem(item)
         }
@@ -475,6 +491,7 @@ export struct LibraryPage {
       artworkUrl: entry.video.coverUri,
       positionMs: entry.video.positionMs,
       durationMs: entry.video.durationMs,
+      cardWidth: ResponsiveSizeClassResolver.landscapeWidth(this.screenWidthVp),
       onCardClick: () => this.openRootFolderEntry(entry)
     })
   }
@@ -1210,7 +1227,16 @@ export struct LibraryPage {
   private buildLocalTitleBarOptions(): HdsNavigationTitleBarOptions {
     const base = buildTitleBarOptions('媒体库', this.hdsMaterialLevel)
     base.content = {
-      title: { mainTitle: '媒体库' }
+      title: { mainTitle: '媒体库' },
+      menu: {
+        value: [{
+          content: {
+            icon: $r('sys.symbol.clock'),
+            label: '播放历史',
+            action: (): void => this.openPlaybackHistoryPage()
+          } as HdsNavigationIconOptions
+        }]
+      }
     }
     return base
   }

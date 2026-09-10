@@ -34,6 +34,7 @@ import { Logger } from '../../utils/Logger'
 import { PiPCallbacks, PiPManager } from '../../services/PiPManager'
 import { TypeNodePiPRoute, TypeNodePiPSession } from '../../services/TypeNodePiPSession'
 import { NowPlayingActions, NowPlayingStore } from '../../services/NowPlayingStore'
+import { AppRadius } from '../../ui/theme/AppRadius'
 import { router, window, PiPWindow, promptAction } from '@kit.ArkUI'
 import { http } from '@kit.NetworkKit'
 import { KeyCode } from '@ohos.multimodalInput.keyCode'
@@ -1214,22 +1215,22 @@ struct PlayerPage {
         if (this.canAuthorizeCurrentVideo()) {
           Button('重新授权')
             .layoutWeight(1)
-            .height(38)
+            .height(44)
             .fontSize(14)
             .fontColor(Color.White)
             .backgroundColor($r('app.color.accent_blue'))
-            .borderRadius(12)
+            .borderRadius(AppRadius.BUTTON)
             .onClick(() => {
               this.authorizeCurrentVideo()
             })
         }
         Button('重新选择')
           .layoutWeight(1)
-          .height(38)
+          .height(44)
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
           .backgroundColor($r('app.color.button_ghost_bg'))
-          .borderRadius(12)
+          .borderRadius(AppRadius.BUTTON)
           .onClick(() => {
             this.pickVideoFile()
           })
@@ -1540,7 +1541,7 @@ struct PlayerPage {
         .fontColor([this.subtitleMenuSection === 'primary' ? $r('app.color.accent_blue') : '#A6FFFFFF'])
     }
     .width('100%')
-    .height(38)
+    .height(44)
     .padding({ left: 12, right: 10 })
     .borderRadius(13)
     .backgroundColor(this.subtitleMenuSection === 'primary' ? $r('app.color.accent_blue_light') : Color.Transparent)
@@ -1564,7 +1565,7 @@ struct PlayerPage {
         .fontColor([this.subtitleMenuSection === section ? $r('app.color.accent_blue') : '#A6FFFFFF'])
     }
     .width('100%')
-    .height(38)
+    .height(44)
     .padding({ left: 12, right: 10 })
     .borderRadius(13)
     .backgroundColor(this.subtitleMenuSection === section ? $r('app.color.accent_blue_light') : Color.Transparent)
@@ -1585,7 +1586,7 @@ struct PlayerPage {
         .layoutWeight(1)
     }
     .width('100%')
-    .height(38)
+    .height(44)
     .padding({ left: 12, right: 10 })
     .borderRadius(13)
     .alignItems(VerticalAlign.Center)
@@ -1903,8 +1904,8 @@ struct PlayerPage {
           SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(20)
             .fontColor([$r('sys.color.icon_secondary')])
-            .width(36)
-            .height(36)
+            .width(44)
+            .height(44)
             .onClick(() => {
               this.showPlaybackQueue = false
               this.startAutoHideTimer()
@@ -2170,7 +2171,7 @@ struct PlayerPage {
       }
     }
       .width('100%')
-      .height(40)
+      .height(44)
       .padding({ left: 14, right: 14 })
       .borderRadius(8)
       .backgroundColor(Color.Transparent)
@@ -2226,8 +2227,8 @@ struct PlayerPage {
           SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(20)
             .fontColor([$r('sys.color.icon_secondary')])
-            .width(40)
-            .height(40)
+            .width(44)
+            .height(44)
             .onClick(() => {
               this.showDanmakuManageSheet = false
               this.startAutoHideTimer()

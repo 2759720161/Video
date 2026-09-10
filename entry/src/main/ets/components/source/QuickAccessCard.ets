@@ -1,6 +1,7 @@
 import { AppRadius } from '../../ui/theme/AppRadius'
 import { AppTypography } from '../../ui/theme/AppTypography'
 import { AppDimensions } from '../../ui/theme/AppDimensions'
+import { AppMotion } from '../../ui/theme/AppMotion'
 
 @Component
 export struct QuickAccessCard {
@@ -37,7 +38,7 @@ export struct QuickAccessCard {
     .border({ width: 0.5, color: $r('app.color.card_specular_border') })
     .scale({ x: this.isPressed ? 0.96 : 1, y: this.isPressed ? 0.96 : 1 })
     .opacity(this.isPressed ? 0.86 : 1)
-    .animation({ duration: 140, curve: Curve.EaseOut })
+    .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) this.isPressed = true
       else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false

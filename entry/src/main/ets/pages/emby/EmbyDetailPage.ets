@@ -6,12 +6,13 @@ import { EmbyProvider } from '../../providers/emby/EmbyProvider'
 import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
-import { buildTitleBarOptions, getContentMaxWidth, isTabletLayout,
+import { buildTitleBarOptions, getDetailContentMaxWidth, isTabletLayout, isWideDetailLayout,
   HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
+import { EpisodeRow } from '../../components/media/EpisodeRow'
 
 @Entry
 @Component
@@ -59,7 +60,7 @@ struct EmbyDetailPage {
   @Builder
   private DetailContent(item: EmbyItem): void {
     Stack({ alignContent: Alignment.Top }) {
-      if (isTabletLayout(this.screenWidthVp) && this.tabletBackdropUrl(item).length > 0) {
+      if (isWideDetailLayout(this.screenWidthVp) && this.tabletBackdropUrl(item).length > 0) {
         Image(this.tabletBackdropUrl(item))
           .width('100%').height(430).objectFit(ImageFit.Cover)
           .blur(22).opacity(0.24).draggable(false)
@@ -72,13 +73,13 @@ struct EmbyDetailPage {
       }
       Scroll() {
         Column({ space: 16 }) {
-          if (isTabletLayout(this.screenWidthVp)) {
+          if (isWideDetailLayout(this.screenWidthVp)) {
             this.TabletDetailLayout(item)
           } else {
             this.PhoneDetailLayout(item)
           }
         }.width('100%')
-          .constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+          .constraintSize({ maxWidth: getDetailContentMaxWidth(this.screenWidthVp) || '100%' })
           .padding(isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE)
           .alignItems(HorizontalAlign.Center)
       }.width('100%').height('100%').scrollBar(BarState.Off)
@@ -210,7 +211,7 @@ struct EmbyDetailPage {
           ForEach(this.playbackVariants, (variant: PlaybackVariant) => {
             Column({ space: 2 }) {
               Button(variant.name.length > 0 ? variant.name : variant.id)
-                .height(36).fontSize(13)
+                .height(44).fontSize(13)
                 .fontColor(variant.id === this.selectedVariantId ? $r('app.color.text_on_primary') : $r('app.color.text_primary'))
                 .backgroundColor(variant.id === this.selectedVariantId ? $r('app.color.accent_blue') : $r('app.color.button_ghost_bg'))
                 .onClick(() => this.selectPlaybackVariant(variant))
@@ -358,7 +359,7 @@ struct EmbyDetailPage {
         Row({ space: 8 }) {
           ForEach(this.seasonItems, (season: EmbyItem) => {
             Button(season.subtitle().length > 0 ? season.subtitle() : season.name)
-              .height(36).fontSize(13)
+              .height(44).fontSize(13)
               .fontColor(season.id === this.selectedSeasonId ? $r('app.color.text_on_primary') : $r('app.color.text_primary'))
               .backgroundColor(season.id === this.selectedSeasonId ? $r('app.color.accent_blue') : $r('app.color.button_ghost_bg'))
               .onClick(() => { void this.selectSeason(season) })
@@ -373,25 +374,14 @@ struct EmbyDetailPage {
     Column({ space: 8 }) {
       MediaSectionHeader({ title: '剧集' })
       ForEach(this.episodeItems, (episode: EmbyItem, index: number) => {
-        Row({ space: 10 }) {
-          Text(episode.indexNumber > 0 ? String(episode.indexNumber).padStart(2, '0') : String(index + 1))
-            .fontSize(15).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_secondary')).width(30)
-          Column({ space: 3 }) {
-            Text(episode.name).fontSize(14).fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary')).maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(this.episodeMeta(episode)).fontSize(12).fontColor($r('app.color.text_secondary'))
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-          }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-          if (episode.resumePositionMs() > 0) {
-            Progress({ value: this.episodeProgress(episode), total: 100, type: ProgressType.Linear })
-              .width(48).height(3).color($r('app.color.accent_blue'))
-          }
-          SymbolGlyph($r('sys.symbol.play_fill')).fontSize(18).fontColor([$r('app.color.accent_blue')])
-        }
-        .width('100%').padding({ left: 12, right: 12, top: 9, bottom: 9 })
-        .borderRadius(12).backgroundColor($r('app.color.card_background'))
-        .onClick(() => { void this.playEpisode(episode) })
+        EpisodeRow({
+          indexLabel: episode.indexNumber > 0 ? String(episode.indexNumber).padStart(2, '0') : String(index + 1),
+          title: episode.name,
+          meta: this.episodeMeta(episode),
+          artworkUrl: this.episodeArtworkUrl(episode),
+          progress: this.episodeProgress(episode),
+          onRowClick: () => { void this.playEpisode(episode) }
+        })
       }, (episode: EmbyItem) => 'detail_episode_' + episode.id)
     }.width('100%').alignItems(HorizontalAlign.Start)
   }
@@ -407,6 +397,11 @@ struct EmbyDetailPage {
     const duration = episode.durationMs()
     if (duration <= 0) return 0
     return Math.min(100, Math.max(0, episode.resumePositionMs() / duration * 100))
+  }
+
+  private episodeArtworkUrl(episode: EmbyItem): string {
+    const provider = this.itemProvider()
+    return provider === null ? '' : provider.thumbnailUrlFor(episode, 320)
   }
 
   private preferredEpisode(): EmbyItem | null {

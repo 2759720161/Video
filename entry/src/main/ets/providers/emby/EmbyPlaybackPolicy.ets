@@ -30,10 +30,12 @@ export class EmbyPlaybackPolicy {
     if (sources.length === 0) throw new Error('Emby 未返回可播放的媒体源')
     if (mode !== EmbyPlaybackMode.TRANSCODE) {
       for (let i = 0; i < sources.length; i++) {
-        if (sources[i].directPlayUrl.length > 0 || sources[i].directStreamUrl.length > 0 ||
-          sources[i].supportsDirectPlay || sources[i].supportsDirectStream) {
+        if (sources[i].directStreamUrl.length > 0 || sources[i].supportsDirectStream) {
           return sources[i]
         }
+      }
+      for (let i = 0; i < sources.length; i++) {
+        if (sources[i].directPlayUrl.length > 0 || sources[i].supportsDirectPlay) return sources[i]
       }
     }
     if (mode !== EmbyPlaybackMode.DIRECT) {

@@ -6,6 +6,7 @@ import {
   hdsMaterial
 } from '@kit.UIDesignKit'
 import { LengthMetrics } from '@kit.ArkUI'
+import { ResponsiveSizeClass, ResponsiveSizeClassResolver } from '../ui/theme/ResponsiveSizeClass'
 
 export const DEFAULT_TOP_SAFE_HEIGHT: number = 36
 export const MINI_TITLE_BAR_CONTENT_HEIGHT: number = 72
@@ -169,32 +170,49 @@ export function buildTimelineTitleBarStyle(level: string = getHdsMaterialLevelSt
 }
 
 export function isTabletLayout(screenWidthVp: number): boolean {
-  return screenWidthVp >= 600
+  return ResponsiveSizeClassResolver.resolve(screenWidthVp) !== ResponsiveSizeClass.COMPACT
 }
 
 export function isWideDetailLayout(screenWidthVp: number): boolean {
-  return screenWidthVp >= 600
+  const sizeClass = ResponsiveSizeClassResolver.resolve(screenWidthVp)
+  return sizeClass === ResponsiveSizeClass.EXPANDED || sizeClass === ResponsiveSizeClass.LARGE
 }
 
 export function getSideBarWidth(screenWidthVp: number): number {
-  if (screenWidthVp >= 1200) {
-    return 320
-  }
-  if (screenWidthVp >= 840) {
-    return 280
-  }
+  const sizeClass = ResponsiveSizeClassResolver.resolve(screenWidthVp)
+  if (sizeClass === ResponsiveSizeClass.LARGE) return 320
+  if (sizeClass === ResponsiveSizeClass.EXPANDED) return 280
   return 240
 }
 
 export function getContentMaxWidth(screenWidthVp: number): number {
-  if (screenWidthVp >= 1200) {
-    return 1000
-  }
-  if (screenWidthVp >= 840) {
-    return 840
-  }
-  if (screenWidthVp >= 600) {
-    return 720
-  }
+  const sizeClass = ResponsiveSizeClassResolver.resolve(screenWidthVp)
+  if (sizeClass === ResponsiveSizeClass.LARGE) return 1000
+  if (sizeClass === ResponsiveSizeClass.EXPANDED) return 840
+  if (sizeClass === ResponsiveSizeClass.MEDIUM) return 720
+  return 0
+}
+
+/** Media pages may use a wider canvas for rails and hero content. */
+export function getMediaContentMaxWidth(screenWidthVp: number): number {
+  const sizeClass = ResponsiveSizeClassResolver.resolve(screenWidthVp)
+  if (sizeClass === ResponsiveSizeClass.LARGE) return 1320
+  if (sizeClass === ResponsiveSizeClass.EXPANDED) return 1120
+  return 0
+}
+
+/** Management pages stay denser than media pages on large windows. */
+export function getManagementContentMaxWidth(screenWidthVp: number): number {
+  const sizeClass = ResponsiveSizeClassResolver.resolve(screenWidthVp)
+  if (sizeClass === ResponsiveSizeClass.LARGE || sizeClass === ResponsiveSizeClass.EXPANDED) return 840
+  if (sizeClass === ResponsiveSizeClass.MEDIUM) return 720
+  return 0
+}
+
+/** Detail pages reserve room for the poster and information columns. */
+export function getDetailContentMaxWidth(screenWidthVp: number): number {
+  const sizeClass = ResponsiveSizeClassResolver.resolve(screenWidthVp)
+  if (sizeClass === ResponsiveSizeClass.LARGE) return 1200
+  if (sizeClass === ResponsiveSizeClass.EXPANDED) return 1120
   return 0
 }

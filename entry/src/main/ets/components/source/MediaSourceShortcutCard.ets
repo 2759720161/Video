@@ -3,6 +3,8 @@ import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
 import { AppRadius } from '../../ui/theme/AppRadius'
 import { AppTypography } from '../../ui/theme/AppTypography'
 import { AppDimensions } from '../../ui/theme/AppDimensions'
+import { AppMotion } from '../../ui/theme/AppMotion'
+import { AppSurface } from '../../ui/theme/AppSurface'
 
 @Component
 export struct MediaSourceShortcutCard {
@@ -10,6 +12,8 @@ export struct MediaSourceShortcutCard {
   @Prop providerType: string = ''
   @Prop statusText: string = ''
   @Prop isEnabled: boolean = true
+  @Prop tileWidth: number = 128
+  @Prop tileHeight: number = 80
   @State private isPressed: boolean = false
   onCardClick?: () => void
 
@@ -22,33 +26,32 @@ export struct MediaSourceShortcutCard {
         .fontColor($r('app.color.text_primary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width(120)
+        .width(this.tileWidth - 16)
       Text(this.providerLabel())
         .fontSize(AppTypography.CAPTION)
         .fontColor($r('app.color.text_secondary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width(120)
+        .width(this.tileWidth - 16)
       if (this.statusText.length > 0) {
         Text(this.statusText)
         .fontSize(AppTypography.CAPTION)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width(120)
+          .width(this.tileWidth - 16)
       }
     }
-    .width(AppDimensions.SOURCE_CARD_WIDTH)
-    .height(AppDimensions.SOURCE_CARD_HEIGHT)
-    .padding(12)
+    .width(this.tileWidth)
+    .height(this.tileHeight)
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
     .alignItems(HorizontalAlign.Start)
-    .borderRadius(AppRadius.CARD)
-    .backgroundColor($r('app.color.card_background'))
-    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+    .borderRadius(AppRadius.SMALL_BUTTON)
+    .backgroundColor(AppSurface.color(AppSurface.SURFACE_INTERACTIVE))
     .enabled(this.isEnabled)
     .opacity(this.isEnabled ? (this.isPressed ? 0.86 : 1) : 0.55)
-    .scale({ x: this.isPressed ? 0.96 : 1, y: this.isPressed ? 0.96 : 1 })
-    .animation({ duration: 140, curve: Curve.EaseOut })
+    .scale({ x: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1 })
+    .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) this.isPressed = true
       else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false

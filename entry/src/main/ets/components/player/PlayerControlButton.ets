@@ -1,3 +1,5 @@
+import { AppMotion } from '../../ui/theme/AppMotion'
+
 /** 播放器统一控制按钮，保持最小 44vp 触控区域。 */
 @Component
 export struct PlayerControlButton {
@@ -20,9 +22,9 @@ export struct PlayerControlButton {
     .backgroundColor('#00000000')
     .justifyContent(FlexAlign.Center)
     .alignItems(VerticalAlign.Center)
-    .scale({ x: this.isPressed ? 0.92 : 1, y: this.isPressed ? 0.92 : 1 })
+    .scale({ x: this.isPressed ? AppMotion.ICON_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.ICON_PRESS_SCALE : 1 })
     .opacity(this.isPressed ? 0.78 : 1)
-    .animation({ duration: 120, curve: Curve.EaseOut })
+    .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
         this.isPressed = true

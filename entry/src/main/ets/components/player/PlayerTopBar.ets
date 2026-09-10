@@ -1,4 +1,5 @@
 import { PlayerControlButton } from './PlayerControlButton'
+import { AppMotion } from '../../ui/theme/AppMotion'
 
 /** 播放器顶栏纯 UI 组件；播放器生命周期和动作仍由页面注入。 */
 @Component
@@ -26,7 +27,7 @@ export struct PlayerTopBar {
         .width(44).height(44).justifyContent(FlexAlign.Center)
         .scale({ x: this.pipPressed ? 0.96 : 1, y: this.pipPressed ? 0.96 : 1 })
         .opacity(this.pipPressed ? 0.86 : 1)
-        .animation({ duration: 120, curve: Curve.EaseOut })
+        .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
         .onTouch((event: TouchEvent) => {
           if (event.type === TouchType.Down) this.pipPressed = true
           else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.pipPressed = false

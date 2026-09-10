@@ -37,7 +37,7 @@ export struct ContinueWatchingHero {
           .width('100%')
         MediaProgressBar({ positionMs: this.positionMs, durationMs: this.durationMs })
         Button('继续播放')
-          .height(36)
+          .height(44)
           .fontSize(AppTypography.BODY)
           .fontColor($r('app.color.text_on_primary'))
           .backgroundColor($r('app.color.accent_blue'))

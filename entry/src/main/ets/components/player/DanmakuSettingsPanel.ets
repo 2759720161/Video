@@ -258,9 +258,9 @@ export struct DanmakuSettingsPanelContent {
             .fontSize(18)
             .fontColor([$r('app.color.text_primary')])
         }
-        .width(36)
-        .height(36)
-        .borderRadius(18)
+        .width(44)
+        .height(44)
+        .borderRadius(22)
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
         .onClick(() => {
@@ -654,7 +654,7 @@ export struct DanmakuSettingsPanelContent {
           }
         })
         TextInput({ placeholder: '用空格、逗号或分号分隔', text: this.blockKeywordsText })
-          .height(40)
+          .height(44)
           .fontSize(13)
           .enabled(this.blockKeywordsEnabled)
           .opacity(this.blockKeywordsEnabled ? 1.0 : 0.4)
@@ -679,7 +679,7 @@ export struct DanmakuSettingsPanelContent {
           }
         })
         TextInput({ placeholder: '输入一个正则表达式', text: this.blockRegexText })
-          .height(40)
+          .height(44)
           .fontSize(13)
           .enabled(this.blockRegexEnabled)
           .opacity(this.blockRegexEnabled ? 1.0 : 0.4)

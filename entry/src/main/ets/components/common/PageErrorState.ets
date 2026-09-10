@@ -19,7 +19,7 @@ export struct PageErrorState {
         Text(this.message).fontSize(13).fontColor($r('app.color.text_secondary'))
           .maxLines(3).textAlign(TextAlign.Center)
       }
-      Button(this.retryText).height(38).fontSize(13)
+      Button(this.retryText).height(44).fontSize(13)
         .fontColor($r('app.color.text_on_primary')).backgroundColor($r('app.color.accent_blue'))
         .borderRadius(AppRadius.BUTTON)
         .onClick(() => { if (this.onRetry) this.onRetry() })

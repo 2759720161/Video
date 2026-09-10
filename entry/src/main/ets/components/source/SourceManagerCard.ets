@@ -2,11 +2,11 @@ import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
 import { ProviderIcon } from './ProviderIcon'
 import { SourceActionKind, SourceActionSheet } from './SourceActionSheet'
 import { SourceStatusBadge } from './SourceStatusBadge'
-import { AppRadius } from '../../ui/theme/AppRadius'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { AppTypography } from '../../ui/theme/AppTypography'
+import { AppMotion } from '../../ui/theme/AppMotion'
 
-/** 来源管理页单张来源卡，只保留浏览主入口和低频操作菜单。 */
+/** 来源管理页分组行，只保留浏览主入口和低频操作菜单。 */
 @Component
 export struct SourceManagerCard {
   @Prop source: MediaSourceInstance = new MediaSourceInstance()
@@ -63,14 +63,13 @@ export struct SourceManagerCard {
       }
     }
     .width('100%')
-    .padding({ left: AppSpacing.CARD_CONTENT, right: AppSpacing.SMALL,
-      top: AppSpacing.SMALL, bottom: AppSpacing.SMALL })
-    .borderRadius(AppRadius.CARD)
-    .backgroundColor($r('app.color.card_background'))
-    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
+    .height(72)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.SM,
+      top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .border({ width: { bottom: 0.5 }, color: $r('app.color.divider_color') })
     .opacity(this.isEnabled || this.isBuiltIn ? (this.isPressed ? 0.86 : 1) : 0.58)
-    .scale({ x: this.isPressed ? 0.96 : 1, y: this.isPressed ? 0.96 : 1 })
-    .animation({ duration: 140, curve: Curve.EaseOut })
+    .scale({ x: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1 })
+    .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) this.isPressed = true
       else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false

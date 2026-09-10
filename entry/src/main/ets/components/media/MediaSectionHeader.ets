@@ -14,12 +14,17 @@ export struct MediaSectionHeader {
         .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
       if (this.actionText.length > 0) {
-        Text(this.actionText)
-          .fontSize(AppTypography.BODY)
-          .fontColor($r('app.color.accent_blue'))
-          .onClick(() => {
-            if (this.onAction) this.onAction()
-          })
+        Row() {
+          Text(this.actionText)
+            .fontSize(AppTypography.BODY)
+            .fontColor($r('app.color.accent_blue'))
+        }
+        .height(44)
+        .padding({ left: 8, right: 8 })
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          if (this.onAction) this.onAction()
+        })
       }
     }
     .width('100%')

@@ -21,7 +21,7 @@ export struct PageEmptyState {
           .maxLines(2).textAlign(TextAlign.Center)
       }
       if (this.primaryActionText.length > 0) {
-        Button(this.primaryActionText).height(38).fontSize(13)
+        Button(this.primaryActionText).height(44).fontSize(13)
           .fontColor($r('app.color.text_on_primary')).backgroundColor($r('app.color.accent_blue'))
           .borderRadius(AppRadius.BUTTON)
           .onClick(() => { if (this.onPrimaryAction) this.onPrimaryAction() })

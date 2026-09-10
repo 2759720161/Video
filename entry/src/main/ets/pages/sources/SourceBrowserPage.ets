@@ -10,12 +10,15 @@ import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
 import { PreferencesStore } from '../../store/PreferencesStore'
 import { BrowserBreadcrumbItem } from '../../models/BrowserBreadcrumbItem'
-import { buildTitleBarOptions, getContentMaxWidth, isTabletLayout,
+import { buildTitleBarOptions, getManagementContentMaxWidth, isTabletLayout,
   HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageEmptyState } from '../../components/common/PageEmptyState'
 import { PageErrorState } from '../../components/common/PageErrorState'
+import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
+import { AppMotion } from '../../ui/theme/AppMotion'
+import { AppRadius } from '../../ui/theme/AppRadius'
 
 @Entry
 @Component
@@ -77,7 +80,7 @@ struct SourceBrowserPage {
                 }, (item: MediaItem) => 'grid_' + item.sourceId + '_' + item.id)
               }.columnsTemplate(this.gridColumns()).columnsGap(10).rowsGap(10).width('100%')
             } else {
-              Column({ space: 10 }) {
+              Column() {
                 ForEach(this.visibleItems(), (item: MediaItem) => { this.ItemCard(item) },
                   (item: MediaItem) => 'list_' + item.sourceId + '_' + item.id)
               }.width('100%')
@@ -99,13 +102,13 @@ struct SourceBrowserPage {
       if (this.searchSupported) {
         Row({ space: 8 }) {
           TextInput({ placeholder: '搜索当前来源', text: this.searchText })
-            .layoutWeight(1).height(42).fontSize(14).backgroundColor($r('app.color.button_ghost_bg'))
+            .layoutWeight(1).height(44).fontSize(14).backgroundColor($r('app.color.button_ghost_bg'))
             .borderRadius(12).onChange((value: string) => this.searchText = value)
-          Button('搜索').height(42).fontSize(13).onClick(() => this.searchItems())
+          Button('搜索').height(44).fontSize(13).onClick(() => this.searchItems())
         }.width('100%')
       }
       Row({ space: 8 }) {
-        Button(this.sortDescending ? '名称 ↓' : '名称 ↑').height(34).fontSize(12)
+        Button(this.sortDescending ? '名称 ↓' : '名称 ↑').height(44).fontSize(12)
           .backgroundColor(Color.Transparent).onClick(() => this.sortDescending = !this.sortDescending)
         Blank().layoutWeight(1)
         SymbolGlyph($r('sys.symbol.more'))
@@ -113,7 +116,7 @@ struct SourceBrowserPage {
           .width(44).height(44)
           .onClick(() => this.openToolbarMenu())
       }.width('100%')
-    }.width('100%').constraintSize({ maxWidth: getContentMaxWidth(this.screenWidthVp) || '100%' })
+    }.width('100%').constraintSize({ maxWidth: getManagementContentMaxWidth(this.screenWidthVp) || '100%' })
       .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
         right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
         top: AppSpacing.SMALL, bottom: 4 })
@@ -171,7 +174,7 @@ struct SourceBrowserPage {
   @Builder
   private ItemCard(item: MediaItem): void {
     Row({ space: 12 }) {
-      this.ItemThumbnail(item, 64, 48)
+      this.ItemThumbnail(item, 88, 50)
       Column({ space: 4 }) {
         Text(item.title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -179,11 +182,11 @@ struct SourceBrowserPage {
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(16).fontColor([$r('app.color.text_secondary')])
-    }.width('100%').padding(14).borderRadius(12)
-      .backgroundColor($r('app.color.card_background'))
+    }.width('100%').height(72).padding({ top: 8, bottom: 8 })
+      .border({ width: { bottom: 0.5 }, color: $r('app.color.divider_color') })
       .scale({ x: this.itemCardScale('list_' + item.id), y: this.itemCardScale('list_' + item.id) })
       .opacity(this.itemCardOpacity('list_' + item.id))
-      .animation({ duration: 140, curve: Curve.EaseOut })
+      .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
       .onTouch((event: TouchEvent) => this.handleItemTouch('list_' + item.id, event))
       .onClick(() => this.openItem(item))
   }
@@ -196,12 +199,11 @@ struct SourceBrowserPage {
         .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
       if (item.subtitle.length > 0) Text(item.subtitle).fontSize(11).fontColor($r('app.color.text_secondary'))
         .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
-    }.width('100%').height(item.browsable ? 150 : this.gridVideoThumbnailHeight() + 92)
-      .padding(12).alignItems(HorizontalAlign.Start)
-      .borderRadius(12).backgroundColor($r('app.color.card_background'))
+    }.width('100%').height(item.browsable ? 150 : this.gridVideoThumbnailHeight() + 68)
+      .alignItems(HorizontalAlign.Start)
       .scale({ x: this.itemCardScale('grid_' + item.id), y: this.itemCardScale('grid_' + item.id) })
       .opacity(this.itemCardOpacity('grid_' + item.id))
-      .animation({ duration: 140, curve: Curve.EaseOut })
+      .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
       .onTouch((event: TouchEvent) => this.handleItemTouch('grid_' + item.id, event))
       .onClick(() => this.openItem(item))
   }
@@ -210,13 +212,13 @@ struct SourceBrowserPage {
   private ItemThumbnail(item: MediaItem, width: Length, height: Length): void {
     if (!item.browsable && item.poster.length > 0) {
       Image(item.poster).width(width).height(height).objectFit(ImageFit.Cover)
-        .borderRadius(9).draggable(false)
+        .borderRadius(AppRadius.MEDIA_LANDSCAPE).draggable(false)
     } else {
       Column() {
         SymbolGlyph(item.browsable ? $r('sys.symbol.folder') : $r('sys.symbol.play_round_rectangle'))
           .fontSize(26).fontColor([$r('app.color.accent_blue')])
       }.width(width).height(height).justifyContent(FlexAlign.Center)
-        .borderRadius(9).backgroundColor($r('app.color.button_ghost_bg'))
+        .borderRadius(AppRadius.SMALL_BUTTON).backgroundColor($r('app.color.button_ghost_bg'))
     }
   }
 
@@ -372,9 +374,10 @@ struct SourceBrowserPage {
   }
 
   private gridColumns(): string {
-    if (this.screenWidthVp >= 1000) return '1fr 1fr 1fr 1fr'
-    if (isTabletLayout(this.screenWidthVp)) return '1fr 1fr 1fr'
-    return '1fr 1fr'
+    const count = ResponsiveSizeClassResolver.columns(this.screenWidthVp)
+    let template = '1fr'
+    for (let i = 1; i < count; i++) template += ' 1fr'
+    return template
   }
 
   /** 让视频缩略图在不同列数下保持接近 16:9，文件夹仍使用紧凑卡片。 */
