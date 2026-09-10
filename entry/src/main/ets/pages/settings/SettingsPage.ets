@@ -13,12 +13,14 @@ import {
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { SettingsGroup } from '../../components/settings/SettingsGroup'
 import { SettingsRow } from '../../components/settings/SettingsRow'
+import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
 
 @Component
 export struct SettingsPage {
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
+  @StorageLink('screenWidthVp') screenWidthVp: number = 360
   private scroller: Scroller = new Scroller()
   @State private appVersion: string = '读取中…'
 
@@ -42,7 +44,8 @@ export struct SettingsPage {
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
-        .padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE })
+        .padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+          right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp) })
         .constraintSize({ minHeight: '100%' })
       }
       .width('100%')

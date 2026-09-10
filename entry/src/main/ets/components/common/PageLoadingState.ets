@@ -8,7 +8,7 @@ export struct PageLoadingState {
   @Prop minHeight: number = 240
 
   build() {
-    Column({ space: AppSpacing.CARD_CONTENT }) {
+    Column({ space: AppSpacing.MD }) {
       LoadingProgress().width(38).height(38)
       Text(this.title).fontSize(15).fontColor($r('app.color.text_secondary'))
       if (this.message.length > 0) {

@@ -8,16 +8,17 @@ import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
 import { ProviderDescriptor } from '../../providers/base/ProviderDescriptor'
 import { ProviderCapability } from '../../core/media/ProviderCapabilities'
-import { buildTitleBarOptions, getManagementContentMaxWidth, isTabletLayout,
+import { buildTitleBarOptions, getManagementContentMaxWidth,
   HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { AppRadius } from '../../ui/theme/AppRadius'
 import { AppTypography } from '../../ui/theme/AppTypography'
 import { SourceActionKind } from '../../components/source/SourceActionSheet'
-import { SourceManagerCard } from '../../components/source/SourceManagerCard'
+import { SourceManagerRow } from '../../components/source/SourceManagerRow'
 import { SourceSectionHeader } from '../../components/source/SourceSectionHeader'
 import { PageEmptyState } from '../../components/common/PageEmptyState'
 import { AppSurface } from '../../ui/theme/AppSurface'
+import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
 
 @Entry
 @Component
@@ -40,8 +41,9 @@ struct SourceManagerPage {
           Text('管理已连接的媒体来源').fontSize(14).fontColor($r('app.color.text_secondary')).layoutWeight(1)
           Button('+ 添加').height(44).fontSize(14).fontColor($r('app.color.accent_blue')).backgroundColor(Color.Transparent)
             .onClick(() => router.pushUrl({ url: 'pages/sources/AddSourcePage' }))
-        }.width('100%').padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE,
-          top: AppSpacing.SECTION_COMPACT, bottom: AppSpacing.SMALL })
+        }.width('100%').padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+          right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+          top: AppSpacing.SECTION_COMPACT, bottom: AppSpacing.SM })
         Scroll() {
           Column({ space: 12 }) {
             if (this.sources.length === 0) {
@@ -52,13 +54,14 @@ struct SourceManagerPage {
               if (this.localSources().length > 0) {
                 Column() {
                   SourceSectionHeader({ title: '本地', count: this.localSources().length })
-                  ForEach(this.localSources(), (source: MediaSourceInstance) => {
-                    SourceManagerCard({ source: source,
+                  ForEach(this.localSources(), (source: MediaSourceInstance, index: number) => {
+                    SourceManagerRow({ source: source,
                       providerLabel: this.providerLabel(source),
                       statusText: this.sourceStatus(source),
                       isBuiltIn: this.isBuiltInSource(source),
                       canBrowse: this.hasDescriptorCapability(source, ProviderCapability.BROWSE),
                       isEnabled: source.enabled,
+                      showDivider: index < this.localSources().length - 1,
                       onBrowse: () => this.browse(source) })
                   }, (source: MediaSourceInstance) => 'source_manager_local_' + source.id)
                 }
@@ -69,8 +72,8 @@ struct SourceManagerPage {
               if (this.remoteSources().length > 0) {
                 Column() {
                   SourceSectionHeader({ title: '服务器', count: this.remoteSources().length })
-                  ForEach(this.remoteSources(), (source: MediaSourceInstance) => {
-                    SourceManagerCard({ source: source,
+                  ForEach(this.remoteSources(), (source: MediaSourceInstance, index: number) => {
+                    SourceManagerRow({ source: source,
                       providerLabel: this.providerLabel(source),
                       statusText: this.sourceStatus(source),
                       isBuiltIn: this.isBuiltInSource(source),
@@ -80,6 +83,7 @@ struct SourceManagerPage {
                       userToggleable: this.canToggle(source),
                       userReorderable: this.canReorder(source) && this.reorderableSources().length > 1,
                       userRemovable: this.canRemove(source),
+                      showDivider: index < this.remoteSources().length - 1,
                       onBrowse: () => this.browse(source),
                       onAction: (action: SourceActionKind) => this.handleSourceAction(source, action) })
                   }, (source: MediaSourceInstance) => 'source_manager_remote_' + source.id)
@@ -90,8 +94,8 @@ struct SourceManagerPage {
               }
             }
           }.width('100%').constraintSize({ maxWidth: getManagementContentMaxWidth(this.screenWidthVp) || '100%' })
-            .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
-              right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+            .padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+              right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
               bottom: AppSpacing.SECTION })
             .alignItems(HorizontalAlign.Center)
         }.layoutWeight(1).scrollBar(BarState.Off)
@@ -110,31 +114,35 @@ struct SourceManagerPage {
 
   @Builder
   private ReorderState(): void {
-    Row() {
-      Column({ space: 3 }) {
-        Text('调整顺序').fontSize(18).fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-        Text('使用上移和下移调整来源顺序').fontSize(12).fontColor($r('app.color.text_secondary'))
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      Button('完成').height(44).fontSize(13).fontColor($r('app.color.accent_blue'))
-        .backgroundColor(Color.Transparent).onClick(() => this.reorderMode = false)
-    }.width('100%').padding({ left: AppSpacing.TINY, right: AppSpacing.TINY, bottom: AppSpacing.SMALL })
-    ForEach(this.reorderableSources(), (source: MediaSourceInstance, index: number) => {
-      Row({ space: 10 }) {
-        SymbolGlyph($r('sys.symbol.list_bullet')).fontSize(19)
-          .fontColor([$r('app.color.text_secondary')])
-        Text(source.name).fontSize(AppTypography.BODY).fontColor($r('app.color.text_primary'))
-          .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-        Button('上移').width(48).height(44).fontSize(12).backgroundColor(Color.Transparent)
-          .enabled(index > 0).onClick(() => this.moveSource(source, -1))
-        Button('下移').width(48).height(44).fontSize(12).backgroundColor(Color.Transparent)
-          .enabled(index < this.reorderableSources().length - 1).onClick(() => this.moveSource(source, 1))
-      }.width('100%').padding({ left: AppSpacing.CARD_CONTENT, right: AppSpacing.SMALL,
-        top: AppSpacing.SMALL, bottom: AppSpacing.SMALL })
-        .borderRadius(AppRadius.CARD)
-        .backgroundColor($r('app.color.card_background'))
-        .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-    }, (source: MediaSourceInstance) => 'source_reorder_' + source.id)
+    Column() {
+      Row() {
+        Column({ space: 3 }) {
+          Text('调整顺序').fontSize(18).fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          Text('使用上移和下移调整来源顺序').fontSize(12).fontColor($r('app.color.text_secondary'))
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        Button('完成').height(44).fontSize(13).fontColor($r('app.color.accent_blue'))
+          .backgroundColor(Color.Transparent).onClick(() => this.reorderMode = false)
+      }.width('100%').padding({ left: AppSpacing.MD, right: AppSpacing.SM, bottom: AppSpacing.SM })
+      ForEach(this.reorderableSources(), (source: MediaSourceInstance, index: number) => {
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.list_bullet')).fontSize(19)
+            .fontColor([$r('app.color.text_secondary')])
+          Text(source.name).fontSize(AppTypography.BODY).fontColor($r('app.color.text_primary'))
+            .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+          Button('上移').width(48).height(44).fontSize(12).backgroundColor(Color.Transparent)
+            .enabled(index > 0).onClick(() => this.moveSource(source, -1))
+          Button('下移').width(48).height(44).fontSize(12).backgroundColor(Color.Transparent)
+            .enabled(index < this.reorderableSources().length - 1).onClick(() => this.moveSource(source, 1))
+        }.width('100%').height(72).padding({ left: AppSpacing.MD, right: AppSpacing.SM,
+          top: AppSpacing.SM, bottom: AppSpacing.SM })
+          .border({ width: { bottom: index < this.reorderableSources().length - 1 ? 0.5 : 0 },
+            color: $r('app.color.divider_color') })
+      }, (source: MediaSourceInstance) => 'source_reorder_' + source.id)
+    }
+    .width('100%').borderRadius(AppRadius.SURFACE).clip(true)
+    .backgroundColor(AppSurface.color(AppSurface.SURFACE))
+    .border({ width: 0.5, color: AppSurface.borderColor() })
   }
 
   private async loadSources(): Promise<void> {

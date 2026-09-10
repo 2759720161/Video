@@ -3,11 +3,12 @@ import { router } from '@kit.ArkUI'
 import { buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
 import { ProviderDescriptor } from '../../providers/base/ProviderDescriptor'
-import { getManagementContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
+import { getManagementContentMaxWidth } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
-import { ProviderIcon } from '../../components/source/ProviderIcon'
 import { PageEmptyState } from '../../components/common/PageEmptyState'
-import { AppMotion } from '../../ui/theme/AppMotion'
+import { ProviderGalleryCard } from '../../components/source/ProviderGalleryCard'
+import { AppTypography } from '../../ui/theme/AppTypography'
+import { ResponsiveSizeClass, ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
 
 class ProviderCategoryGroup {
   category: string = ''
@@ -19,7 +20,6 @@ class ProviderCategoryGroup {
 struct AddSourcePage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
   @StorageLink('screenWidthVp') screenWidthVp: number = 360
-  @State private pressedProviderType: string = ''
   private providers: ProviderDescriptor[] = ProviderCatalog.getGalleryProviders()
 
   build() {
@@ -27,26 +27,42 @@ struct AddSourcePage {
       Scroll() {
         Column({ space: 12 }) {
           Text('连接你的媒体')
-            .fontSize(22)
+            .fontSize(AppTypography.PAGE_TITLE)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
             .width('100%')
-            .margin({ top: AppSpacing.SMALL, bottom: AppSpacing.TINY })
+            .margin({ top: AppSpacing.SM, bottom: AppSpacing.XS })
+          Text('将家庭媒体服务器和网络存储统一到你的媒体库。')
+            .fontSize(AppTypography.BODY)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
           if (this.providerGroups().length === 0) {
             this.EmptyProviderState()
           } else {
             ForEach(this.providerGroups(), (group: ProviderCategoryGroup) => {
               Column({ space: 8 }) {
-                Text(group.category).fontSize(14).fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_secondary')).width('100%').margin({ top: 8, bottom: 2 })
+                Text(group.category).fontSize(AppTypography.BODY_LARGE).fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_secondary')).width('100%').margin({ top: AppSpacing.SM, bottom: AppSpacing.XS })
                 Grid() {
                   ForEach(group.providers, (descriptor: ProviderDescriptor) => {
-                    GridItem() { this.SourceCard(descriptor) }
+                    GridItem() {
+                      ProviderGalleryCard({
+                        providerType: descriptor.type,
+                        title: descriptor.displayName,
+                        subtitle: this.subtitle(descriptor),
+                        summary: this.featureSummary(descriptor),
+                        isEnabled: descriptor.enabled,
+                        comingSoonText: descriptor.comingSoonText,
+                        onCardClick: () => router.pushUrl({ url: descriptor.addRoute })
+                      })
+                    }
                   }, (descriptor: ProviderDescriptor) => 'add_provider_' + descriptor.type)
                 }
                 .columnsTemplate(this.providerColumns())
-                .columnsGap(AppSpacing.SMALL)
-                .rowsGap(AppSpacing.SMALL)
+                .columnsGap(AppSpacing.SM)
+                .rowsGap(AppSpacing.SM)
                 .width('100%')
               }.width('100%')
             }, (group: ProviderCategoryGroup) => 'add_category_' + group.category)
@@ -54,8 +70,8 @@ struct AddSourcePage {
         }
         .width('100%')
         .constraintSize({ maxWidth: getManagementContentMaxWidth(this.screenWidthVp) || '100%' })
-        .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
-          right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+        .padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+          right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
           bottom: AppSpacing.SECTION })
         .alignItems(HorizontalAlign.Center)
       }
@@ -90,44 +106,6 @@ struct AddSourcePage {
     return groups
   }
 
-  @Builder
-  private SourceCard(descriptor: ProviderDescriptor): void {
-    Column({ space: 9 }) {
-      Row({ space: 12 }) {
-        ProviderIcon({ providerType: descriptor.type })
-        Column({ space: 3 }) {
-          Text(descriptor.displayName).fontSize(17).fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.subtitle(descriptor)).fontSize(13).fontColor($r('app.color.text_secondary'))
-            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      }
-      Text(this.featureSummary(descriptor)).fontSize(12).fontColor($r('app.color.text_secondary'))
-        .maxLines(2).width('100%').textOverflow({ overflow: TextOverflow.Ellipsis })
-      Row() {
-        Blank().layoutWeight(1)
-        if (descriptor.enabled) {
-          SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(20)
-            .fontColor([$r('app.color.accent_blue')])
-        } else {
-          Text(descriptor.comingSoonText.length > 0 ? descriptor.comingSoonText : '即将支持')
-            .fontSize(13).fontColor($r('app.color.text_secondary'))
-        }
-      }.width('100%')
-    }
-    .width('100%').height(174).padding(16).borderRadius(14)
-    .backgroundColor($r('app.color.card_background'))
-    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-    .enabled(descriptor.enabled)
-    .opacity(descriptor.enabled ? (this.pressedProviderType === descriptor.type ? 0.86 : 1) : 0.6)
-    .scale({ x: this.providerCardScale(descriptor.type), y: this.providerCardScale(descriptor.type) })
-    .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => this.handleProviderTouch(descriptor.type, event))
-    .onClick(() => { if (descriptor.enabled) router.pushUrl({ url: descriptor.addRoute }) })
-  }
-
   private subtitle(descriptor: ProviderDescriptor): string {
     if (descriptor.shortDescription.length > 0) return descriptor.shortDescription
     return descriptor.description.length > 0 ? descriptor.description : descriptor.category
@@ -137,28 +115,9 @@ struct AddSourcePage {
     return descriptor.featureSummary.length > 0 ? descriptor.featureSummary : descriptor.description
   }
 
-  private providerCardScale(providerType: string): number {
-    return this.pressedProviderType === providerType && this.providersEnabled(providerType) ? 0.96 : 1
-  }
-
-  private providersEnabled(providerType: string): boolean {
-    for (let i = 0; i < this.providers.length; i++) {
-      if (this.providers[i].type === providerType) return this.providers[i].enabled
-    }
-    return false
-  }
-
-  private handleProviderTouch(providerType: string, event: TouchEvent): void {
-    if (!this.providersEnabled(providerType)) return
-    if (event.type === TouchType.Down) {
-      this.pressedProviderType = providerType
-    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      if (this.pressedProviderType === providerType) this.pressedProviderType = ''
-    }
-  }
-
   private providerColumns(): string {
-    return isTabletLayout(this.screenWidthVp) ? '1fr 1fr' : '1fr'
+    const sizeClass = ResponsiveSizeClassResolver.resolve(this.screenWidthVp)
+    return sizeClass === ResponsiveSizeClass.COMPACT ? '1fr' : '1fr 1fr'
   }
 
   @Builder

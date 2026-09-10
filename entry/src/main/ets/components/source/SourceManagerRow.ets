@@ -6,9 +6,9 @@ import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { AppTypography } from '../../ui/theme/AppTypography'
 import { AppMotion } from '../../ui/theme/AppMotion'
 
-/** 来源管理页分组行，只保留浏览主入口和低频操作菜单。 */
+/** Source management row shared by normal and grouped management views. */
 @Component
-export struct SourceManagerCard {
+export struct SourceManagerRow {
   @Prop source: MediaSourceInstance = new MediaSourceInstance()
   @Prop providerLabel: string = ''
   @Prop statusText: string = ''
@@ -19,21 +19,22 @@ export struct SourceManagerCard {
   @Prop userToggleable: boolean = true
   @Prop userReorderable: boolean = true
   @Prop userRemovable: boolean = true
+  @Prop showDivider: boolean = true
   @State private isPressed: boolean = false
   onBrowse?: () => void
   onAction?: (action: SourceActionKind) => void
 
   build() {
-    Row({ space: AppSpacing.CARD_CONTENT }) {
+    Row({ space: AppSpacing.MD }) {
       ProviderIcon({ providerType: this.source.providerType })
-      Column({ space: AppSpacing.TINY }) {
+      Column({ space: AppSpacing.XS }) {
         Text(this.source.name)
           .fontSize(AppTypography.CARD_TITLE)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Row({ space: AppSpacing.SMALL }) {
+        Row({ space: AppSpacing.SM }) {
           Text(this.providerLabel)
             .fontSize(AppTypography.CAPTION)
             .fontColor($r('app.color.text_secondary'))
@@ -66,7 +67,7 @@ export struct SourceManagerCard {
     .height(72)
     .padding({ left: AppSpacing.MD, right: AppSpacing.SM,
       top: AppSpacing.SM, bottom: AppSpacing.SM })
-    .border({ width: { bottom: 0.5 }, color: $r('app.color.divider_color') })
+    .border({ width: { bottom: this.showDivider ? 0.5 : 0 }, color: $r('app.color.divider_color') })
     .opacity(this.isEnabled || this.isBuiltIn ? (this.isPressed ? 0.86 : 1) : 0.58)
     .scale({ x: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1 })
     .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })

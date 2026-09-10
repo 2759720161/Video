@@ -13,11 +13,4 @@ export class AppSpacing {
   static readonly SECTION: number = 32
   static readonly SECTION_COMPACT: number = 24
 
-  // Compatibility aliases for existing components. New components should use
-  // the semantic XS/SM/MD/LG/XL tokens above.
-  static readonly PAGE: number = AppSpacing.PAGE_PHONE
-  static readonly CARD: number = 12
-  static readonly CARD_CONTENT: number = AppSpacing.MD
-  static readonly SMALL: number = AppSpacing.SM
-  static readonly TINY: number = AppSpacing.XS
 }

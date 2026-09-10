@@ -6,13 +6,17 @@ import { EmbyProvider } from '../../providers/emby/EmbyProvider'
 import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
-import { buildTitleBarOptions, getDetailContentMaxWidth, isTabletLayout, isWideDetailLayout,
+import { buildTitleBarOptions, getDetailContentMaxWidth, isWideDetailLayout,
   HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
 import { EpisodeRow } from '../../components/media/EpisodeRow'
+import { MediaDetailHero } from '../../components/media/MediaDetailHero'
+import { AppRadius } from '../../ui/theme/AppRadius'
+import { AppSurface } from '../../ui/theme/AppSurface'
+import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
 
 @Entry
 @Component
@@ -80,29 +84,11 @@ struct EmbyDetailPage {
           }
         }.width('100%')
           .constraintSize({ maxWidth: getDetailContentMaxWidth(this.screenWidthVp) || '100%' })
-          .padding(isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE)
+          .padding(ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp))
           .alignItems(HorizontalAlign.Center)
       }.width('100%').height('100%').scrollBar(BarState.Off)
     }
     .width('100%').height('100%')
-  }
-
-  @Builder
-  private TabletPoster(item: EmbyItem): void {
-    if (this.imageUrl(item).length > 0) {
-      Image(this.imageUrl(item))
-        .width('100%').height(this.detailHeroHeight())
-        .objectFit(ImageFit.Contain).draggable(false)
-        .backgroundColor($r('app.color.button_ghost_bg'))
-    } else {
-      Column() {
-        SymbolGlyph($r('sys.symbol.play_round_rectangle')).fontSize(48)
-          .fontColor([$r('app.color.text_secondary')])
-      }
-      .width('100%').height(this.detailHeroHeight())
-      .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-      .backgroundColor($r('app.color.button_ghost_bg'))
-    }
   }
 
   private tabletBackdropUrl(item: EmbyItem): string {
@@ -112,62 +98,30 @@ struct EmbyDetailPage {
 
   @Builder
   private PhoneDetailLayout(item: EmbyItem): void {
-    this.HeroImage(item)
-    this.DetailMeta(item)
-    this.DetailActions(item)
+    MediaDetailHero({
+      title: item.name,
+      meta: this.metaText(item),
+      overview: item.overview,
+      artworkUrl: this.heroImageUrl(item),
+      usePosterFallback: this.heroUsesPoster(item),
+      actionText: this.primaryActionText(item),
+      onPrimaryAction: () => this.handlePrimaryAction(item)
+    })
     this.DetailSections(item)
   }
 
   @Builder
   private TabletDetailLayout(item: EmbyItem): void {
-    Row({ space: 24 }) {
-      Column() {
-        this.TabletPoster(item)
-      }.width('42%')
-      Column({ space: 16 }) {
-        this.DetailMeta(item)
-        this.DetailActions(item)
-      }
-      .layoutWeight(1).alignItems(HorizontalAlign.Start)
-    }.width('100%').alignItems(VerticalAlign.Top)
+    MediaDetailHero({
+      title: item.name,
+      meta: this.metaText(item),
+      overview: item.overview,
+      artworkUrl: this.imageUrl(item),
+      wide: true,
+      actionText: this.primaryActionText(item),
+      onPrimaryAction: () => this.handlePrimaryAction(item)
+    })
     this.DetailSections(item)
-  }
-
-  @Builder
-  private DetailMeta(item: EmbyItem): void {
-    Column({ space: 8 }) {
-      Text(item.name).fontSize(24).fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary')).width('100%').maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(this.metaText(item)).fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
-        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-      if (item.overview.length > 0) {
-        Text(item.overview).fontSize(14).fontColor($r('app.color.text_primary'))
-          .lineHeight(22).width('100%').textAlign(TextAlign.Start)
-      }
-    }.width('100%').alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private DetailActions(item: EmbyItem): void {
-    Row({ space: 10 }) {
-      if (!item.isFolder) {
-        Button(this.resumeLabel(item)).layoutWeight(1).height(46).fontSize(15)
-          .fontColor($r('app.color.text_on_primary')).backgroundColor($r('app.color.accent_blue'))
-          .onClick(() => this.play(item))
-      } else if (this.episodeItems.length > 0) {
-        Button(this.episodeActionLabel()).layoutWeight(1).height(46).fontSize(15)
-          .fontColor($r('app.color.text_on_primary')).backgroundColor($r('app.color.accent_blue'))
-          .onClick(() => {
-            const episode = this.preferredEpisode()
-            if (episode !== null) void this.playEpisode(episode)
-          })
-      } else {
-        Button('浏览下级').layoutWeight(1).height(46).fontSize(15)
-          .fontColor($r('app.color.text_on_primary')).backgroundColor($r('app.color.accent_blue'))
-          .onClick(() => this.openChildren(item))
-      }
-    }.width('100%')
   }
 
   @Builder
@@ -188,7 +142,9 @@ struct EmbyDetailPage {
       if (item.container.length > 0) this.DetailInfoRow('格式', item.container.toUpperCase())
     }
     .width('100%')
-    .padding({ top: 4, bottom: 4 })
+    .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM, left: AppSpacing.MD, right: AppSpacing.MD })
+    .borderRadius(AppRadius.SURFACE)
+    .backgroundColor(AppSurface.color(AppSurface.SURFACE))
   }
 
   @Builder
@@ -223,41 +179,6 @@ struct EmbyDetailPage {
         }
       }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).width('100%')
     }.width('100%').alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private HeroImage(item: EmbyItem): void {
-    Stack({ alignContent: Alignment.Bottom }) {
-      if (this.heroUsesPoster(item)) {
-        Image(this.heroImageUrl(item))
-          .width('100%').height(this.detailHeroHeight()).objectFit(ImageFit.Cover)
-          .blur(18).opacity(0.42).draggable(false)
-        Image(this.heroImageUrl(item))
-          .width('100%').height(this.detailHeroHeight()).objectFit(ImageFit.Contain)
-          .draggable(false)
-      } else if (this.heroImageUrl(item).length > 0) {
-        Image(this.heroImageUrl(item)).width('100%').height(this.detailHeroHeight()).objectFit(ImageFit.Cover)
-          .backgroundColor($r('app.color.button_ghost_bg')).draggable(false)
-      } else {
-        Column() {
-          SymbolGlyph($r('sys.symbol.play_round_rectangle')).fontSize(48)
-            .fontColor([$r('app.color.text_secondary')])
-        }
-        .width('100%').height(this.detailHeroHeight())
-        .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-        .backgroundColor($r('app.color.button_ghost_bg'))
-      }
-      Column()
-        .width('100%').height(this.detailHeroHeight() * 0.46)
-        .linearGradient({ direction: GradientDirection.Bottom,
-          colors: [[Color.Transparent, 0], [$r('app.color.page_background'), 1]] })
-    }
-    .width('100%').height(this.detailHeroHeight())
-    .clip(true).borderRadius(16)
-  }
-
-  private detailHeroHeight(): number {
-    return isTabletLayout(this.screenWidthVp) ? 320 : 210
   }
 
   private async loadItem(): Promise<void> {
@@ -349,6 +270,25 @@ struct EmbyDetailPage {
 
   private resumeLabel(item: EmbyItem): string {
     return item.resumePositionMs() > 0 ? '继续播放' : '播放'
+  }
+
+  private primaryActionText(item: EmbyItem): string {
+    if (!item.isFolder) return this.resumeLabel(item)
+    if (this.episodeItems.length > 0) return this.episodeActionLabel()
+    return '浏览下级'
+  }
+
+  private handlePrimaryAction(item: EmbyItem): void {
+    if (!item.isFolder) {
+      void this.play(item)
+      return
+    }
+    if (this.episodeItems.length > 0) {
+      const episode = this.preferredEpisode()
+      if (episode !== null) void this.playEpisode(episode)
+      return
+    }
+    this.openChildren(item)
   }
 
   @Builder

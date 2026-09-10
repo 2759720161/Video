@@ -12,7 +12,7 @@ export struct PageEmptyState {
   onPrimaryAction?: () => void
 
   build() {
-    Column({ space: AppSpacing.SMALL }) {
+    Column({ space: AppSpacing.SM }) {
       SymbolGlyph(this.icon).fontSize(34).fontColor([$r('app.color.accent_blue')])
       Text(this.title).fontSize(17).fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -28,7 +28,7 @@ export struct PageEmptyState {
       }
     }
     .width('100%').height(this.minHeight > 0 ? this.minHeight : 'auto').padding({ top: AppSpacing.SECTION, bottom: AppSpacing.SECTION,
-      left: AppSpacing.CARD_CONTENT, right: AppSpacing.CARD_CONTENT })
+      left: AppSpacing.MD, right: AppSpacing.MD })
     .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
   }
 }

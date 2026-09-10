@@ -10,7 +10,7 @@ import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
 import { PreferencesStore } from '../../store/PreferencesStore'
 import { BrowserBreadcrumbItem } from '../../models/BrowserBreadcrumbItem'
-import { buildTitleBarOptions, getManagementContentMaxWidth, isTabletLayout,
+import { buildTitleBarOptions, getManagementContentMaxWidth,
   HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
@@ -86,8 +86,8 @@ struct SourceBrowserPage {
               }.width('100%')
             }
           }.width('100%').layoutWeight(1).scrollBar(BarState.Off)
-            .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
-              right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
+            .padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+              right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
               bottom: AppSpacing.SECTION })
         }
     }.width('100%').height('100%')
@@ -117,9 +117,9 @@ struct SourceBrowserPage {
           .onClick(() => this.openToolbarMenu())
       }.width('100%')
     }.width('100%').constraintSize({ maxWidth: getManagementContentMaxWidth(this.screenWidthVp) || '100%' })
-      .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
-        right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
-        top: AppSpacing.SMALL, bottom: 4 })
+      .padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+        right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+        top: AppSpacing.SM, bottom: 4 })
       .alignItems(HorizontalAlign.Center)
   }
 
@@ -149,7 +149,8 @@ struct SourceBrowserPage {
         }
       }
       .scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
-      .width('100%').padding({ left: AppSpacing.PAGE, right: AppSpacing.PAGE, bottom: AppSpacing.SMALL })
+      .width('100%').padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+        right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp), bottom: AppSpacing.SM })
       .onAppear(() => this.scrollBreadcrumbToCurrent())
     }
   }
@@ -382,9 +383,10 @@ struct SourceBrowserPage {
 
   /** 让视频缩略图在不同列数下保持接近 16:9，文件夹仍使用紧凑卡片。 */
   private gridVideoThumbnailHeight(): number {
-    if (this.screenWidthVp >= 1000) return 120
-    if (isTabletLayout(this.screenWidthVp)) return 108
-    if (this.screenWidthVp >= 410) return 92
+    const sizeClass = ResponsiveSizeClassResolver.resolve(this.screenWidthVp)
+    if (sizeClass === 'large') return 120
+    if (sizeClass === 'expanded') return 108
+    if (sizeClass === 'medium') return 96
     return 84
   }
 

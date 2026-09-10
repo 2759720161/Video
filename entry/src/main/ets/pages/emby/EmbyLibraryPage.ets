@@ -9,7 +9,7 @@ import { EmbySourceConfigCodec } from '../../providers/emby/EmbySourceConfig'
 import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { PreferencesStore } from '../../store/PreferencesStore'
 import { buildImmersiveTitleBarStyle, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL,
-  getTopSpacerHeight, getMediaContentMaxWidth, isTabletLayout } from '../../utils/HdsPageStyle'
+  getTopSpacerHeight, getMediaContentMaxWidth } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
@@ -145,8 +145,8 @@ struct EmbyLibraryPage {
           }
           .width('100%')
           .constraintSize({ minHeight: '100%', maxWidth: getMediaContentMaxWidth(this.screenWidthVp) || '100%' })
-          .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
-            right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE })
+          .padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+            right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp) })
           .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
@@ -295,7 +295,7 @@ struct EmbyLibraryPage {
       artworkUrl: this.heroImageUrl(item, 1000),
       positionMs: item.resumePositionMs(),
       durationMs: item.durationMs(),
-      heightVp: isTabletLayout(this.screenWidthVp) ? AppDimensions.HERO_TABLET_HEIGHT : AppDimensions.HERO_PHONE_HEIGHT,
+      heightVp: AppDimensions.HERO_PHONE_HEIGHT,
       widthVp: this.pageWidth,
       actionText: this.featuredActionLabel(item),
       usePosterFallback: this.heroUsesPoster(item),

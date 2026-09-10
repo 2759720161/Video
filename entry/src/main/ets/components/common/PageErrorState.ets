@@ -10,7 +10,7 @@ export struct PageErrorState {
   onRetry?: () => void
 
   build() {
-    Column({ space: AppSpacing.SMALL }) {
+    Column({ space: AppSpacing.SM }) {
       SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
         .fontSize(34).fontColor([$r('app.color.status_error')])
       Text(this.title).fontSize(17).fontWeight(FontWeight.Medium)
@@ -25,7 +25,7 @@ export struct PageErrorState {
         .onClick(() => { if (this.onRetry) this.onRetry() })
     }
     .width('100%').padding({ top: AppSpacing.SECTION, bottom: AppSpacing.SECTION,
-      left: AppSpacing.CARD_CONTENT, right: AppSpacing.CARD_CONTENT })
+      left: AppSpacing.MD, right: AppSpacing.MD })
     .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
   }
 }

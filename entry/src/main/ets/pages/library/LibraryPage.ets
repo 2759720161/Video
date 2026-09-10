@@ -46,12 +46,12 @@ import { MediaItemType } from '../../core/media/MediaItem'
 import { ProviderCapability } from '../../core/media/ProviderCapabilities'
 import { ProviderHomeSnapshot } from '../../models/ProviderHomeSnapshot'
 import { LibraryHomeCoordinator } from '../../services/library/LibraryHomeCoordinator'
-import { isTabletLayout, getMediaContentMaxWidth } from '../../utils/HdsPageStyle'
+import { getMediaContentMaxWidth } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
-import { AppRadius } from '../../ui/theme/AppRadius'
 import { AppDimensions } from '../../ui/theme/AppDimensions'
-import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
+import { ResponsiveSizeClass, ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
 import { MediaHero } from '../../components/media/MediaHero'
+import { EmptyLibraryHero } from '../../components/media/EmptyLibraryHero'
 import { ContinueWatchingCard as V2ContinueWatchingCard } from '../../components/media/ContinueWatchingCard'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
 import { MediaShortcutTile } from '../../components/navigation/MediaShortcutTile'
@@ -180,8 +180,8 @@ export struct LibraryPage {
           }
           .width('100%')
           .constraintSize({ minHeight: '100%' })
-          .padding({ left: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE,
-            right: isTabletLayout(this.screenWidthVp) ? AppSpacing.PAGE_TABLET : AppSpacing.PAGE })
+          .padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+            right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp) })
           .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
@@ -240,49 +240,20 @@ export struct LibraryPage {
         artworkUrl: this.heroArtworkUrl(),
         positionMs: this.heroPositionMs(),
         durationMs: this.heroDurationMs(),
-        heightVp: isTabletLayout(this.screenWidthVp) ? AppDimensions.HERO_TABLET_HEIGHT : AppDimensions.HERO_PHONE_HEIGHT,
+        heightVp: AppDimensions.HERO_PHONE_HEIGHT,
         widthVp: this.screenWidthVp,
         onPlay: () => this.openHeroHistory()
       })
         .margin({ top: 12 })
     } else {
-      this.WelcomeHeroV2()
+      EmptyLibraryHero({
+        minHeight: this.emptyHeroMinHeight(),
+        onOpenVideo: () => { void this.openVideoFile() },
+        onOpenLocal: () => this.openFolderPage(),
+        onConnectSource: () => router.pushUrl({ url: 'pages/sources/AddSourcePage' })
+      })
+        .margin({ top: AppSpacing.MD })
     }
-  }
-
-  @Builder
-  private WelcomeHeroV2(): void {
-    Column({ space: 10 }) {
-      SymbolGlyph($r('sys.symbol.play_fill'))
-        .fontSize(30)
-        .fontColor([$r('app.color.accent_blue')])
-      Text('开始播放')
-        .fontSize(24)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-      Text('打开本地视频，或进入你的 Emby / WebDAV 媒体库')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .textAlign(TextAlign.Center)
-        .maxLines(2)
-        .width('100%')
-      Button('打开视频')
-        .height(44)
-        .fontSize(14)
-        .fontColor($r('app.color.text_on_primary'))
-        .backgroundColor($r('app.color.accent_blue'))
-        .borderRadius(AppRadius.BUTTON)
-        .onClick(() => {
-          void this.openVideoFile()
-        })
-    }
-    .width('100%')
-    .padding({ top: 28, bottom: 28, left: 20, right: 20 })
-    .borderRadius(24)
-    .backgroundColor($r('app.color.card_background'))
-    .border({ width: 0.5, color: $r('app.color.card_specular_border') })
-    .alignItems(HorizontalAlign.Center)
-    .margin({ top: 12 })
   }
 
   @Builder
@@ -1148,6 +1119,13 @@ export struct LibraryPage {
     if (this.hideContinueWatching) return null
     const records = this.getHomeHistory()
     return records.length > 0 ? records[0] : null
+  }
+
+  private emptyHeroMinHeight(): number {
+    const sizeClass = ResponsiveSizeClassResolver.resolve(this.screenWidthVp)
+    if (sizeClass === ResponsiveSizeClass.LARGE || sizeClass === ResponsiveSizeClass.EXPANDED) return 320
+    if (sizeClass === ResponsiveSizeClass.MEDIUM) return 300
+    return 280
   }
 
   private heroTitle(): string {

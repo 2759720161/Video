@@ -21,6 +21,6 @@ export struct SourceSectionHeader {
       }
     }
     .width('100%')
-    .padding({ left: AppSpacing.TINY, right: AppSpacing.TINY, top: AppSpacing.SMALL, bottom: AppSpacing.TINY })
+    .padding({ left: AppSpacing.XS, right: AppSpacing.XS, top: AppSpacing.SM, bottom: AppSpacing.XS })
   }
 }

@@ -9,8 +9,4 @@ export class AppRadius {
   static readonly BUTTON: number = 20
   static readonly SMALL_BUTTON: number = 12
 
-  // Compatibility aliases for the existing V2 component API.
-  static readonly SMALL: number = AppRadius.SMALL_BUTTON
-  static readonly CARD: number = AppRadius.MEDIA_POSTER
-  static readonly LARGE_CARD: number = AppRadius.MEDIA_LANDSCAPE
 }
