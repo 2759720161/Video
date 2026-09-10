@@ -15,6 +15,7 @@ const EMBY_CLIENT_VERSION: string = '1.0.0'
 
 export class EmbyClient {
   private config: EmbyServerConfig
+  private playbackInfoCache: Record<string, EmbyPlaybackInfo | null> = {}
 
   constructor(config: EmbyServerConfig) {
     this.config = config
@@ -93,6 +94,23 @@ export class EmbyClient {
     const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items?' + query.join('&')
     const response = await this.requestObject(path, http.RequestMethod.GET)
     return this.parseItems(response)
+  }
+
+  /**
+   * Query only the server-side count for a child type. Limit=1 keeps the
+   * response small while TotalRecordCount still describes the full result.
+   */
+  async getItemCount(parentId: string, itemType: string): Promise<number> {
+    const normalizedParentId = EmbyClient.normalizeText(parentId)
+    const normalizedItemType = EmbyClient.normalizeText(itemType)
+    if (normalizedParentId.length === 0 || normalizedItemType.length === 0) return 0
+    const query = '/Users/' + encodeURIComponent(this.config.userId) + '/Items?' +
+      'ParentId=' + encodeURIComponent(normalizedParentId) +
+      '&Recursive=true&IncludeItemTypes=' + encodeURIComponent(normalizedItemType) +
+      '&Limit=1&EnableImages=false&EnableUserData=false'
+    const response = await this.requestObject(query, http.RequestMethod.GET)
+    const total = EmbyClient.readNumber(response, 'TotalRecordCount')
+    return Number.isFinite(total) && total > 0 ? Math.floor(total) : 0
   }
 
   /**
@@ -180,6 +198,7 @@ export class EmbyClient {
       encodeURIComponent(this.config.userId)
     const response = await this.requestObject(path, http.RequestMethod.GET)
     const info = EmbyPlaybackInfo.parse(response)
+    if (info.mediaSources.length > 0) this.playbackInfoCache[item.id] = info
     const result: PlaybackVariant[] = []
     const usedIds: Record<string, boolean> = {}
     for (let i = 0; i < info.mediaSources.length; i++) {
@@ -197,10 +216,15 @@ export class EmbyClient {
   }
 
   async getPlaybackRoute(item: EmbyItem, variantId: string = ''): Promise<EmbyPlaybackRoute> {
-    const path = '/Items/' + encodeURIComponent(item.id) + '/PlaybackInfo?UserId=' +
-      encodeURIComponent(this.config.userId)
-    const response = await this.requestObject(path, http.RequestMethod.GET)
-    const info = EmbyPlaybackInfo.parse(response)
+    let info = this.playbackInfoCache[item.id]
+    if (info === undefined || info === null) {
+      const path = '/Items/' + encodeURIComponent(item.id) + '/PlaybackInfo?UserId=' +
+        encodeURIComponent(this.config.userId)
+      const response = await this.requestObject(path, http.RequestMethod.GET)
+      info = EmbyPlaybackInfo.parse(response)
+    } else {
+      this.playbackInfoCache[item.id] = null
+    }
     if (info.mediaSources.length === 0) {
       throw new Error('Emby 未返回可播放的媒体源')
     }
@@ -371,6 +395,9 @@ export class EmbyClient {
       item.productionYear = EmbyClient.readNumber(value, 'ProductionYear')
       item.indexNumber = EmbyClient.readNumber(value, 'IndexNumber')
       item.parentIndexNumber = EmbyClient.readNumber(value, 'ParentIndexNumber')
+      item.seasonCount = EmbyClient.readNumber(value, 'SeasonCount')
+      item.childCount = EmbyClient.readNumber(value, 'ChildCount')
+      item.recursiveItemCount = EmbyClient.readNumber(value, 'RecursiveItemCount')
       item.seriesName = EmbyClient.readString(value, 'SeriesName')
       item.overview = EmbyClient.readString(value, 'Overview')
       item.container = EmbyClient.readString(value, 'Container')

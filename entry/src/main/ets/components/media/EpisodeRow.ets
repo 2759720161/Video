@@ -11,6 +11,8 @@ export struct EpisodeRow {
   @Prop meta: string = ''
   @Prop artworkUrl: string = ''
   @Prop progress: number = 0
+  @Prop played: boolean = false
+  @Prop isResumeTarget: boolean = false
   @Prop showDivider: boolean = true
   @State private isPressed: boolean = false
   @State private artworkLoaded: boolean = false
@@ -50,11 +52,17 @@ export struct EpisodeRow {
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      SymbolGlyph($r('sys.symbol.play_fill')).fontSize(18)
-        .fontColor([$r('app.color.accent_blue')])
+      if (this.played) {
+        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18)
+          .fontColor([$r('app.color.accent_blue')])
+      } else {
+        SymbolGlyph($r('sys.symbol.play_fill')).fontSize(18)
+          .fontColor([$r('app.color.accent_blue')])
+      }
     }
     .width('100%').height(80)
     .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .backgroundColor(this.isResumeTarget ? '#142B5C' : Color.Transparent)
     .border({ width: { bottom: this.showDivider ? 0.5 : 0 }, color: $r('app.color.divider_color') })
     .scale({ x: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1 })
     .opacity(this.isPressed ? 0.84 : 1)

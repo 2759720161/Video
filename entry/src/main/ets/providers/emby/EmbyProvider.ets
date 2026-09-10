@@ -59,6 +59,10 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     return this.client.getItems(EmbyProvider.normalizeText(parentId))
   }
 
+  async getEpisodeCount(parentId: string): Promise<number> {
+    return this.client.getItemCount(EmbyProvider.normalizeText(parentId), 'Episode')
+  }
+
   /** Emby 全局搜索保留专属条目元数据，供媒体中心搜索结果直接渲染。 */
   async searchRaw(keyword: string): Promise<EmbyItem[]> {
     return this.client.searchItems(EmbyProvider.normalizeText(keyword))

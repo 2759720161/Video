@@ -45,6 +45,10 @@ export class EmbyItem {
   productionYear: number = 0
   indexNumber: number = 0
   parentIndexNumber: number = 0
+  /** Series/Season 统计字段；由 Emby Items 响应直接提供。 */
+  seasonCount: number = 0
+  childCount: number = 0
+  recursiveItemCount: number = 0
   seriesName: string = ''
   overview: string = ''
   imageItemId: string = ''
