@@ -13,6 +13,11 @@ export struct MediaDetailHero {
   @Prop artworkUrl: string = ''
   @Prop usePosterFallback: boolean = false
   @Prop wide: boolean = false
+  @Prop artworkWidth: number = 280
+  @Prop artworkHeight: number = 420
+  @Prop showIdentity: boolean = true
+  @Prop showAction: boolean = true
+  @Prop showOverview: boolean = true
   @Prop actionText: string = '播放'
   @State private artworkLoaded: boolean = false
   @State private isPressed: boolean = false
@@ -30,37 +35,41 @@ export struct MediaDetailHero {
   private PhoneHero(): void {
     Stack({ alignContent: Alignment.BottomStart }) {
       this.Artwork(240, ImageFit.Cover)
-      Column({ space: AppSpacing.SM }) {
-        Text(this.title)
-          .fontSize(AppTypography.HERO_TITLE)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(Color.White)
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(this.meta)
-          .fontSize(AppTypography.META)
-          .fontColor('#E6FFFFFF')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        if (this.onPrimaryAction) {
-          this.PrimaryButton()
+      if (this.showIdentity || this.showAction || this.showOverview) {
+        Column({ space: AppSpacing.SM }) {
+          if (this.showIdentity) {
+            Text(this.title)
+              .fontSize(AppTypography.HERO_TITLE)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Color.White)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+            Text(this.meta)
+              .fontSize(AppTypography.META)
+              .fontColor('#E6FFFFFF')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }
+          if (this.showAction && this.onPrimaryAction) {
+            this.PrimaryButton()
+          }
+          if (this.showOverview && this.overview.length > 0) {
+            Text(this.overview)
+              .fontSize(AppTypography.BODY)
+              .fontColor('#F0FFFFFF')
+              .lineHeight(22)
+              .maxLines(4)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }
         }
-        if (this.overview.length > 0) {
-          Text(this.overview)
-            .fontSize(AppTypography.BODY)
-            .fontColor('#F0FFFFFF')
-            .lineHeight(22)
-            .maxLines(4)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-        }
+        .width('100%')
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XL, bottom: AppSpacing.MD })
+        .linearGradient({ direction: GradientDirection.Bottom,
+          colors: [[Color.Transparent, 0], ['#E6000000', 0.7], ['#F0000000', 1]] })
       }
-      .width('100%')
-      .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XL, bottom: AppSpacing.MD })
-      .linearGradient({ direction: GradientDirection.Bottom,
-        colors: [[Color.Transparent, 0], ['#E6000000', 0.7], ['#F0000000', 1]] })
     }
     .width('100%')
     .height(240)
@@ -72,37 +81,41 @@ export struct MediaDetailHero {
   private WideHero(): void {
     Row({ space: AppSpacing.XL }) {
       this.WideArtwork()
-      Column({ space: AppSpacing.MD }) {
-        Text(this.title)
-          .fontSize(AppTypography.PAGE_TITLE)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(this.meta)
-          .fontSize(AppTypography.META)
-          .fontColor($r('app.color.text_secondary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        if (this.onPrimaryAction) {
-          this.PrimaryButton()
+      if (this.showIdentity || this.showAction || this.showOverview) {
+        Column({ space: AppSpacing.MD }) {
+          if (this.showIdentity) {
+            Text(this.title)
+              .fontSize(AppTypography.PAGE_TITLE)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+            Text(this.meta)
+              .fontSize(AppTypography.META)
+              .fontColor($r('app.color.text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }
+          if (this.showAction && this.onPrimaryAction) {
+            this.PrimaryButton()
+          }
+          if (this.showOverview && this.overview.length > 0) {
+            Text(this.overview)
+              .fontSize(AppTypography.BODY)
+              .fontColor($r('app.color.text_primary'))
+              .lineHeight(22)
+              .maxLines(4)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }
         }
-        if (this.overview.length > 0) {
-          Text(this.overview)
-            .fontSize(AppTypography.BODY)
-            .fontColor($r('app.color.text_primary'))
-            .lineHeight(22)
-            .maxLines(8)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
+    .width(this.showIdentity || this.showAction || this.showOverview ? '100%' : this.artworkWidth)
     .alignItems(VerticalAlign.Top)
   }
 
@@ -110,8 +123,8 @@ export struct MediaDetailHero {
   private WideArtwork(): void {
     if (this.artworkUrl.length > 0) {
       Image(this.artworkUrl)
-        .width(280)
-        .height(320)
+        .width(this.artworkWidth)
+        .height(this.artworkHeight)
         .objectFit(ImageFit.Contain)
         .borderRadius(AppRadius.MEDIA_POSTER)
         .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
@@ -125,8 +138,8 @@ export struct MediaDetailHero {
           .fontSize(48)
           .fontColor([$r('app.color.text_secondary')])
       }
-      .width(280)
-      .height(320)
+      .width(this.artworkWidth)
+      .height(this.artworkHeight)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .borderRadius(AppRadius.MEDIA_POSTER)

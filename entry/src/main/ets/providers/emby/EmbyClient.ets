@@ -225,15 +225,15 @@ export class EmbyClient {
     // not by a phone. Prefer the server-mediated direct stream, which still
     // avoids transcoding while preserving the authenticated Emby route.
     if (playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directStreamUrl.length > 0) {
-      url = this.absoluteUrl(source.directStreamUrl)
+      url = this.normalizePlaybackUrl(this.absoluteUrl(source.directStreamUrl))
       playMethod = 'DirectStream'
     }
     if (url.length === 0 && playbackMode !== EmbyPlaybackMode.TRANSCODE && source.directPlayUrl.length > 0) {
-      url = this.absoluteUrl(source.directPlayUrl)
+      url = this.normalizePlaybackUrl(this.absoluteUrl(source.directPlayUrl))
       playMethod = 'DirectPlay'
     }
     if (url.length === 0 && playbackMode !== EmbyPlaybackMode.DIRECT && source.transcodingUrl.length > 0) {
-      url = this.absoluteUrl(source.transcodingUrl)
+      url = this.normalizePlaybackUrl(this.absoluteUrl(source.transcodingUrl))
       playMethod = 'Transcode'
     }
     if (url.length === 0) {
@@ -252,7 +252,7 @@ export class EmbyClient {
         playMethod = 'DirectStream'
       }
     }
-    url = EmbyClient.appendQuery(url, 'api_key', this.config.accessToken)
+    url = this.normalizePlaybackUrl(EmbyClient.appendQuery(url, 'api_key', this.config.accessToken))
     const route = new EmbyPlaybackRoute()
     route.url = url
     route.mediaSourceId = mediaSourceId
@@ -414,6 +414,32 @@ export class EmbyClient {
       return (marker >= 0 ? this.config.baseUrl.substring(0, marker) : this.config.baseUrl) + path
     }
     return this.config.baseUrl + (path.startsWith('/') ? path : '/' + path)
+  }
+
+  /**
+   * Normalize the legacy `/Videos/{id}/stream/{container}` form returned by
+   * some Emby versions and reverse proxies. The Emby media endpoint expects
+   * the container as a file extension (`stream.mkv`); the legacy form returns
+   * HTTP 404 before authentication is evaluated.
+   */
+  private normalizePlaybackUrl(url: string): string {
+    const marker = '/stream/'
+    const lower = url.toLowerCase()
+    const markerIndex = lower.indexOf(marker)
+    if (markerIndex < 0) return url
+    const containerStart = markerIndex + marker.length
+    let containerEnd = containerStart
+    while (containerEnd < url.length) {
+      const code = url.charCodeAt(containerEnd)
+      const isDigit = code >= 48 && code <= 57
+      const isUpper = code >= 65 && code <= 90
+      const isLower = code >= 97 && code <= 122
+      if (!isDigit && !isUpper && !isLower) break
+      containerEnd++
+    }
+    if (containerEnd === containerStart) return url
+    return url.substring(0, markerIndex) + '/stream.' +
+      url.substring(containerStart, containerEnd) + url.substring(containerEnd)
   }
 
   /**

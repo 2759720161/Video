@@ -11,6 +11,7 @@ export struct EpisodeRow {
   @Prop meta: string = ''
   @Prop artworkUrl: string = ''
   @Prop progress: number = 0
+  @Prop showDivider: boolean = true
   @State private isPressed: boolean = false
   @State private artworkLoaded: boolean = false
   onRowClick?: () => void
@@ -54,7 +55,7 @@ export struct EpisodeRow {
     }
     .width('100%').height(80)
     .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
-    .border({ width: { bottom: 0.5 }, color: $r('app.color.divider_color') })
+    .border({ width: { bottom: this.showDivider ? 0.5 : 0 }, color: $r('app.color.divider_color') })
     .scale({ x: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1 })
     .opacity(this.isPressed ? 0.84 : 1)
     .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
