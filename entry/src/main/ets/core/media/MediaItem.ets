@@ -15,6 +15,10 @@ export class MediaItem {
   id: string = ''
   /** 通用浏览父级标识；首页推荐点击浏览时由 Provider 路由解释。 */
   parentId: string = ''
+  /** Optional provider hierarchy metadata for restoring a unified series detail view. */
+  seriesId: string = ''
+  seasonId: string = ''
+  indexNumber: number = 0
   title: string = ''
   subtitle: string = ''
   overview: string = ''

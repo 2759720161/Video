@@ -66,9 +66,17 @@ struct SourceBrowserPage {
         this.BrowserToolbar()
         this.BreadcrumbBar()
         if (this.loading) {
-          PageLoadingState({ title: '正在读取“' + this.title + '”', minHeight: 240 })
+          Column() {
+            PageLoadingState({ title: '正在读取“' + this.title + '”', minHeight: 240 })
+          }
+          .width('100%').layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
         } else if (this.errorText.length > 0) {
-          PageErrorState({ title: '目录读取失败', message: this.errorText, onRetry: () => this.loadItems() })
+          Column() {
+            PageErrorState({ title: '目录读取失败', message: this.errorText, onRetry: () => this.loadItems() })
+          }
+          .width('100%').layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
         } else if (this.visibleItems().length === 0) {
           this.EmptyBrowserState()
         } else {

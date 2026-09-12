@@ -17,39 +17,55 @@ export class MediaInfoMetric {
 @Component
 export struct MediaInfoStrip {
   @Prop metrics: MediaInfoMetric[] = []
+  @Prop ambientColor: string = ''
 
   build() {
-    Row({ space: 0 }) {
-      ForEach(this.metrics, (metric: MediaInfoMetric, index: number) => {
-        Column({ space: AppSpacing.XS }) {
-          Text(metric.value)
-            .fontSize(AppTypography.BODY_LARGE)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(metric.label)
-            .fontSize(AppTypography.META)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Center)
-        .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
-        if (index < this.metrics.length - 1) {
-          Divider()
-            .vertical(true)
-            .height(32)
-            .strokeWidth(0.5)
-            .color($r('app.color.divider_color'))
-        }
-      }, (metric: MediaInfoMetric, index: number) => metric.label + '_' + index)
+    Stack() {
+      Column()
+        .width('100%').height('100%')
+        .backgroundColor(AppSurface.color(AppSurface.SURFACE))
+      if (this.ambientColor.length > 0) {
+        Column()
+          .width('100%').height('100%')
+          .backgroundColor(this.ambientColor)
+          .opacity(0.08)
+      }
+      Row({ space: 0 }) {
+        ForEach(this.metrics, (metric: MediaInfoMetric, index: number) => {
+          Column({ space: AppSpacing.XS }) {
+            Text(metric.value)
+              .fontSize(AppTypography.BODY_LARGE)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(metric.label)
+              .fontSize(AppTypography.META)
+              .fontColor($r('app.color.text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Center)
+          .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+          if (index < this.metrics.length - 1) {
+            Divider()
+              .vertical(true)
+              .height(32)
+              .strokeWidth(0.5)
+              .color($r('app.color.divider_color'))
+          }
+        }, (metric: MediaInfoMetric, index: number) => metric.label + '_' + index)
+      }
+      .width('100%')
+      .height(72)
+      .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+      .borderRadius(AppRadius.SURFACE)
+      .border({ width: 0.5, color: this.ambientColor.length > 0 ? this.ambientColor : $r('app.color.divider_color') })
     }
     .width('100%')
     .height(72)
-    .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
     .borderRadius(AppRadius.SURFACE)
-    .backgroundColor(AppSurface.color(AppSurface.SURFACE))
+    .clip(true)
   }
 }

@@ -9,6 +9,7 @@ export struct MediaPosterCard {
   @Prop title: string = ''
   @Prop subtitle: string = ''
   @Prop artworkUrl: string = ''
+  @Prop sharedTransitionId: string = ''
   @Prop cardWidth: number = AppDimensions.POSTER_CARD_WIDTH
   @State private isPressed: boolean = false
   @State private artworkLoaded: boolean = false
@@ -16,15 +17,7 @@ export struct MediaPosterCard {
 
   build() {
     Column({ space: 6 }) {
-      Image(this.artworkUrl.length > 0 ? this.artworkUrl : $r('app.media.ic_placeholder'))
-        .width(this.cardWidth)
-        .height(this.cardHeight())
-        .objectFit(ImageFit.Cover)
-        .borderRadius(AppRadius.MEDIA_POSTER)
-        .opacity(this.artworkUrl.length > 0 ? (this.artworkLoaded ? 1 : 0) : 0.82)
-        .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
-        .onComplete(() => this.artworkLoaded = true)
-        .onError(() => this.artworkLoaded = true)
+      this.Artwork()
       Text(this.title)
         .fontSize(AppTypography.CARD_TITLE)
         .fontColor($r('app.color.text_primary'))
@@ -49,6 +42,32 @@ export struct MediaPosterCard {
     .onClick(() => {
       if (this.onCardClick) this.onCardClick()
     })
+  }
+
+  @Builder
+  private Artwork(): void {
+    if (this.sharedTransitionId.length > 0) {
+      Image(this.artworkUrl.length > 0 ? this.artworkUrl : $r('app.media.ic_placeholder'))
+        .width(this.cardWidth)
+        .height(this.cardHeight())
+        .objectFit(ImageFit.Cover)
+        .borderRadius(AppRadius.MEDIA_POSTER)
+        .sharedTransition(this.sharedTransitionId, { duration: 360, curve: Curve.FastOutSlowIn })
+        .opacity(this.artworkUrl.length > 0 ? (this.artworkLoaded ? 1 : 0) : 0.82)
+        .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
+        .onComplete(() => this.artworkLoaded = true)
+        .onError(() => this.artworkLoaded = true)
+    } else {
+      Image(this.artworkUrl.length > 0 ? this.artworkUrl : $r('app.media.ic_placeholder'))
+        .width(this.cardWidth)
+        .height(this.cardHeight())
+        .objectFit(ImageFit.Cover)
+        .borderRadius(AppRadius.MEDIA_POSTER)
+        .opacity(this.artworkUrl.length > 0 ? (this.artworkLoaded ? 1 : 0) : 0.82)
+        .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
+        .onComplete(() => this.artworkLoaded = true)
+        .onError(() => this.artworkLoaded = true)
+    }
   }
 
   private cardHeight(): number {

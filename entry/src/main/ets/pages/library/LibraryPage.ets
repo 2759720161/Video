@@ -98,6 +98,10 @@ export struct LibraryPage {
   private historyRepository: PlaybackHistoryRepository = new PlaybackHistoryRepository()
   private homeCoordinator: LibraryHomeCoordinator = new LibraryHomeCoordinator()
   private reloadGeneration: number = 0
+  private reloadInFlight: boolean = false
+  private reloadAgain: boolean = false
+  private homeSnapshotInFlight: boolean = false
+  private homeSnapshotAgain: boolean = false
   private hasScannedOwnFolder: boolean = false
   private isGeneratingCovers: boolean = false
   private pendingHistoryCoverGeneration: boolean = false
@@ -367,6 +371,7 @@ export struct LibraryPage {
         subtitle: item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'),
         artworkUrl: item.poster,
         cardWidth: ResponsiveSizeClassResolver.posterWidth(this.screenWidthVp),
+        sharedTransitionId: this.embyArtworkSharedTransitionId(item),
         onCardClick: () => {
           void this.openHomeItem(item)
         }
@@ -538,6 +543,23 @@ export struct LibraryPage {
   }
 
   private async reloadPageData(): Promise<void> {
+    if (this.reloadInFlight) {
+      this.reloadAgain = true
+      return
+    }
+    this.reloadInFlight = true
+    try {
+      await this.performReloadPageData()
+    } finally {
+      this.reloadInFlight = false
+      if (this.reloadAgain) {
+        this.reloadAgain = false
+        void this.reloadPageData()
+      }
+    }
+  }
+
+  private async performReloadPageData(): Promise<void> {
     if (!this.isActive) {
       return
     }
@@ -558,6 +580,25 @@ export struct LibraryPage {
   }
 
   private async loadHomeSnapshots(generation: number): Promise<void> {
+    if (this.homeSnapshotInFlight) {
+      this.homeSnapshotAgain = true
+      return
+    }
+    this.homeSnapshotInFlight = true
+    try {
+      await this.performLoadHomeSnapshots(generation)
+    } finally {
+      this.homeSnapshotInFlight = false
+      const nextGeneration = this.reloadGeneration
+      const shouldReload = this.homeSnapshotAgain && nextGeneration !== generation
+      this.homeSnapshotAgain = false
+      if (shouldReload) {
+        void this.loadHomeSnapshots(nextGeneration)
+      }
+    }
+  }
+
+  private async performLoadHomeSnapshots(generation: number): Promise<void> {
     try {
       const context = getContext(this) as common.UIAbilityContext
       const snapshots = await this.homeCoordinator.load(context)
@@ -572,8 +613,15 @@ export struct LibraryPage {
 
   private async openHomeItem(item: MediaItem): Promise<void> {
     try {
+      if (this.isEmbyContentItem(item)) {
+        await router.pushUrl({
+          url: 'pages/emby/EmbyDetailPage',
+          params: this.embyDetailParams(item)
+        })
+        return
+      }
       if (item.browsable) {
-        const descriptor = ProviderCatalog.get(item.sourceId)
+        const descriptor = ProviderCatalog.get(this.providerTypeForSource(item.sourceId))
         if (descriptor === null || descriptor.browserRoute.length === 0) throw new Error('该来源暂不支持浏览')
         const params = descriptor.browserParams(item.sourceId)
         params.parentId = item.id
@@ -588,18 +636,53 @@ export struct LibraryPage {
 
   private isPosterHomeItem(item: MediaItem): boolean {
     return item.type === MediaItemType.MOVIE || item.type === MediaItemType.SERIES ||
-      item.type === MediaItemType.SEASON
+      item.type === MediaItemType.SEASON || item.type === MediaItemType.COLLECTION
   }
 
   private async openHomeSection(sourceId: string, sectionId: string, sectionTitle: string = ''): Promise<void> {
     try {
-      const descriptor = ProviderCatalog.get(sourceId)
+      const descriptor = ProviderCatalog.get(this.providerTypeForSource(sourceId))
       if (descriptor === null || descriptor.browserRoute.length === 0) throw new Error('该来源暂不支持浏览')
       const params = descriptor.sectionParams(sourceId, sectionId, sectionTitle)
       await router.pushUrl({ url: descriptor.browserRoute, params: params })
     } catch (err) {
       logger.warn('打开首页推荐区失败: %{public}s', err instanceof Error ? err.message : String(err))
     }
+  }
+
+  private isEmbyContentItem(item: MediaItem): boolean {
+    const providerType = this.providerTypeForSource(item.sourceId)
+    if (providerType !== 'emby') return false
+    return item.type === MediaItemType.MOVIE || item.type === MediaItemType.SERIES ||
+      item.type === MediaItemType.SEASON || item.type === MediaItemType.EPISODE ||
+      item.type === MediaItemType.VIDEO || item.type === MediaItemType.COLLECTION
+  }
+
+  private embyDetailParams(item: MediaItem): Record<string, Object> {
+    const params: Record<string, Object> = { 'sourceId': item.sourceId, 'itemId': item.id }
+    if (item.type === MediaItemType.SEASON && item.seriesId.length > 0) {
+      params['itemId'] = item.seriesId
+      params['initialSeasonId'] = item.id
+    } else if (item.type === MediaItemType.EPISODE && item.seriesId.length > 0) {
+      params['itemId'] = item.seriesId
+      params['initialSeasonId'] = item.seasonId.length > 0 ? item.seasonId : item.parentId
+      params['initialEpisodeId'] = item.id
+      params['initialEpisodeIndex'] = item.indexNumber
+    }
+    return params
+  }
+
+  private providerTypeForSource(sourceId: string): string {
+    const normalized = sourceId.trim().toLowerCase()
+    for (let i = 0; i < this.mediaSources.length; i++) {
+      if (this.mediaSources[i].id.trim().toLowerCase() === normalized) return this.mediaSources[i].providerType
+    }
+    return normalized
+  }
+
+  private embyArtworkSharedTransitionId(item: MediaItem): string {
+    return this.providerTypeForSource(item.sourceId) === 'emby' ?
+      'emby_artwork_' + item.sourceId + '_' + item.id : ''
   }
 
   @Builder

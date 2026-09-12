@@ -5,7 +5,7 @@ import { ArtworkResolver } from '../../services/ArtworkResolver'
 
 export class EmbyPlaybackLauncher {
   static async open(uiContext: UIContext, sourceId: string, item: EmbyItem,
-    items: EmbyItem[] = [item]): Promise<void> {
+    items: EmbyItem[] = [item], startFromBeginning: boolean = false): Promise<void> {
     const normalizedSourceId = EmbyPlaybackLauncher.normalizeText(sourceId)
     if (item === null || typeof item !== 'object' || Array.isArray(item) || normalizedSourceId.length === 0 ||
       EmbyPlaybackLauncher.normalizeText(item.id).length === 0) {
@@ -21,7 +21,7 @@ export class EmbyPlaybackLauncher {
         queue.push(EmbyPlaybackLauncher.toMediaItem(normalizedSourceId, value))
       }
     }
-    await ProviderPlaybackLauncher.open(uiContext, media, queue)
+    await ProviderPlaybackLauncher.open(uiContext, media, queue, startFromBeginning)
   }
 
   private static toMediaItem(sourceId: string, item: EmbyItem): MediaItem {

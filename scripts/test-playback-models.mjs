@@ -44,3 +44,5 @@ registerHooks({
 
 const { default: playbackModelsTest } = await import('../entry/src/test/PlaybackModels.test.ets');
 playbackModelsTest();
+const { default: embyDetailPresentationTest } = await import('../entry/src/test/EmbyDetailPresentation.test.ets');
+embyDetailPresentationTest();

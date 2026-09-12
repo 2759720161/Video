@@ -20,8 +20,8 @@ export struct ImmersiveArtworkBackground {
           .height(this.heightVp)
           .objectFit(ImageFit.Cover)
           .blur(this.artworkMode === 'poster' ? 32 : 24)
-          .scale({ x: this.artworkMode === 'poster' ? 1.08 : 1,
-            y: this.artworkMode === 'poster' ? 1.08 : 1 })
+          .scale({ x: this.ambientScale(), y: this.ambientScale() })
+          .translate({ y: this.backgroundOffset() })
           .opacity(this.fadeFactor() * this.ambientOpacity)
           .draggable(false)
           .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
@@ -68,6 +68,16 @@ export struct ImmersiveArtworkBackground {
   private fadeFactor(): number {
     const progress = Math.max(0, Math.min(1, this.scrollOffsetVp / 220))
     return Math.max(0.08, 1 - progress * 0.92)
+  }
+
+  private ambientScale(): number {
+    const baseScale = this.artworkMode === 'poster' ? 1.08 : 1.02
+    const progress = Math.max(0, Math.min(1, this.scrollOffsetVp / 220))
+    return baseScale - Math.min(baseScale - 1, progress * 0.02)
+  }
+
+  private backgroundOffset(): number {
+    return Math.min(24, Math.max(0, this.scrollOffsetVp) * 0.10)
   }
 
   private scrimColor(): string {

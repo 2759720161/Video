@@ -39,6 +39,9 @@ export class EmbyItem {
   name: string = ''
   type: string = ''
   parentId: string = ''
+  /** Owning series and season IDs used to restore one unified show-detail context. */
+  seriesId: string = ''
+  seasonId: string = ''
   collectionType: string = ''
   isFolder: boolean = false
   runTimeTicks: number = 0
@@ -103,6 +106,12 @@ export class EmbyItem {
       default: return type.length > 0 ? type : '媒体'
     }
   }
+}
+
+export class EmbyItemsPage {
+  items: EmbyItem[] = []
+  totalRecordCount: number = 0
+  startIndex: number = 0
 }
 
 export class EmbyPlaybackContext {

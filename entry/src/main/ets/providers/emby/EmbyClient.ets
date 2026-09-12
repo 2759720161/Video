@@ -1,6 +1,7 @@
 import { http } from '@kit.NetworkKit'
 import {
   EmbyItem,
+  EmbyItemsPage,
   EmbyPlaybackContext,
   EmbyPlaybackRoute,
   EmbyServerConfig
@@ -8,6 +9,7 @@ import {
 import { EmbyMediaSource, EmbyPlaybackInfo } from './EmbyPlaybackInfo'
 import { EmbyPlaybackMode, EmbyPlaybackPolicy } from './EmbyPlaybackPolicy'
 import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
+import { EmbyLibraryPresentation } from './EmbyLibraryPresentation'
 
 const EMBY_CLIENT_NAME: string = 'Yingxia'
 const EMBY_DEVICE_NAME: string = 'HarmonyOS'
@@ -58,7 +60,8 @@ export class EmbyClient {
     const normalizedItemId = EmbyClient.normalizeText(itemId)
     if (normalizedItemId.length === 0) return null
     const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items/' + encodeURIComponent(normalizedItemId) +
-      '?Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags&EnableImages=true&EnableUserData=true'
+      '?Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags' +
+      '%2CChildCount%2CRecursiveItemCount&EnableImages=true&EnableUserData=true'
     const value = await this.requestObject(path, http.RequestMethod.GET)
     const items = this.parseItems({ 'Items': [value] })
     return items.length === 0 ? null : items[0]
@@ -67,7 +70,8 @@ export class EmbyClient {
   async searchItems(keyword: string, limit: number = 50): Promise<EmbyItem[]> {
     const query = '/Users/' + encodeURIComponent(this.config.userId) + '/Items?SearchTerm=' +
       encodeURIComponent(EmbyClient.normalizeText(keyword)) + '&Recursive=true&Limit=' + Math.max(1, limit) +
-      '&Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags&EnableImages=true&EnableUserData=true'
+      '&Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags' +
+      '&EnableImages=true&EnableUserData=true'
     return this.parseItems(await this.requestObject(query, http.RequestMethod.GET))
   }
 
@@ -79,7 +83,7 @@ export class EmbyClient {
       'Recursive=' + (recursive ? 'true' : 'false'),
       'SortBy=' + encodeURIComponent(sortBy),
       'SortOrder=' + encodeURIComponent(sortOrder),
-      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags',
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags%2CChildCount%2CRecursiveItemCount',
       'EnableImages=true',
       'EnableUserData=true',
       'ImageTypeLimit=1'
@@ -94,6 +98,69 @@ export class EmbyClient {
     const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items?' + query.join('&')
     const response = await this.requestObject(path, http.RequestMethod.GET)
     return this.parseItems(response)
+  }
+
+  /** Series metadata hierarchy; unlike getItems(), this never treats a show as a physical folder. */
+  async getSeriesSeasons(seriesId: string): Promise<EmbyItem[]> {
+    const normalizedSeriesId = EmbyClient.normalizeText(seriesId)
+    if (normalizedSeriesId.length === 0) return []
+    const query: string[] = [
+      'UserId=' + encodeURIComponent(this.config.userId),
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags%2CChildCount%2CRecursiveItemCount',
+      'EnableImages=true',
+      'EnableUserData=true'
+    ]
+    const path = '/Shows/' + encodeURIComponent(normalizedSeriesId) + '/Seasons?' + query.join('&')
+    return this.parseItems(await this.requestObject(path, http.RequestMethod.GET))
+  }
+
+  /** Loads episodes for one selected season through Emby's show-aware endpoint. */
+  async getSeasonEpisodes(seriesId: string, seasonId: string): Promise<EmbyItem[]> {
+    return (await this.getSeasonEpisodesPage(seriesId, seasonId)).items
+  }
+
+  /** Server-paged episode query for large seasons. A zero limit returns the full season. */
+  async getSeasonEpisodesPage(seriesId: string, seasonId: string,
+    startIndex: number = 0, limit: number = 0): Promise<EmbyItemsPage> {
+    const normalizedSeriesId = EmbyClient.normalizeText(seriesId)
+    const normalizedSeasonId = EmbyClient.normalizeText(seasonId)
+    const emptyPage = new EmbyItemsPage()
+    if (normalizedSeasonId.length === 0) return emptyPage
+    const normalizedStart = Math.max(0, Math.floor(startIndex))
+    // Older servers may omit SeriesId on a Season response. Preserve correct
+    // behavior with a non-recursive fallback while keeping the normal path semantic.
+    if (normalizedSeriesId.length === 0) {
+      const fallbackItems = await this.getItems(normalizedSeasonId)
+      emptyPage.totalRecordCount = fallbackItems.length
+      emptyPage.startIndex = normalizedStart
+      emptyPage.items = limit > 0 ? fallbackItems.slice(normalizedStart, normalizedStart + limit) : fallbackItems
+      return emptyPage
+    }
+    const query: string[] = [
+      'UserId=' + encodeURIComponent(this.config.userId),
+      'SeasonId=' + encodeURIComponent(normalizedSeasonId),
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags',
+      'EnableImages=true',
+      'EnableUserData=true',
+      'EnableTotalRecordCount=true',
+      'SortBy=IndexNumber',
+      'SortOrder=Ascending'
+    ]
+    if (normalizedStart > 0) query.push('StartIndex=' + normalizedStart)
+    if (limit > 0) query.push('Limit=' + Math.max(1, Math.floor(limit)))
+    const path = '/Shows/' + encodeURIComponent(normalizedSeriesId) + '/Episodes?' + query.join('&')
+    const response = await this.requestObject(path, http.RequestMethod.GET)
+    const page = new EmbyItemsPage()
+    page.items = this.parseItems(response)
+    page.totalRecordCount = Math.max(normalizedStart + page.items.length,
+      Math.floor(EmbyClient.readNumber(response, 'TotalRecordCount')))
+    page.startIndex = normalizedStart
+    return page
+  }
+
+  /** Physical directory traversal used only by the explicit folder-browse mode. */
+  async getFolderChildren(parentId: string): Promise<EmbyItem[]> {
+    return this.getItems(parentId, 0, false, '', 'SortName', 'Ascending')
   }
 
   /**
@@ -118,17 +185,10 @@ export class EmbyClient {
    * child folders/ Series and movies are deliberately selected so a TV library
    * is rendered as newest-first poster cards rather than a second folder tree/
    */
-  async getLibraryItems(parentId: string, limit: number = 0, collectionType: string = ''): Promise<EmbyItem[]> {
-    const normalizedType = EmbyClient.normalizeText(collectionType).toLowerCase()
-    let itemTypes = 'Series,Movie'
-    if (normalizedType === 'tvshows') {
-      itemTypes = 'Series'
-    } else if (normalizedType === 'movies') {
-      itemTypes = 'Movie'
-    } else if (normalizedType === 'musicvideos' || normalizedType === 'homevideos') {
-      itemTypes = 'Video'
-    }
-    return await this.getItems(parentId, limit, true, itemTypes, 'DateCreated', 'Descending')
+  async getLibraryItems(parentId: string, limit: number = 0, collectionType: string = '',
+    sortBy: string = 'DateCreated', sortOrder: string = 'Descending'): Promise<EmbyItem[]> {
+    const itemTypes = EmbyLibraryPresentation.itemTypes(collectionType)
+    return await this.getItems(parentId, limit, true, itemTypes, sortBy, sortOrder)
   }
 
   async getResumeItems(limit: number = 12): Promise<EmbyItem[]> {
@@ -136,7 +196,7 @@ export class EmbyClient {
       'Recursive=true',
       'MediaTypes=Video',
       'Limit=' + Math.max(1, limit),
-      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags',
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags',
       'EnableImages=true',
       'EnableUserData=true',
       'ImageTypeLimit=1'
@@ -146,13 +206,31 @@ export class EmbyClient {
     return this.parseItems(response)
   }
 
+  /** Resolve a show's/season's watch target independently of the visible episode page. */
+  async getDetailPlaybackTarget(parentId: string): Promise<EmbyItem | null> {
+    const parent = EmbyClient.normalizeText(parentId)
+    if (parent.length === 0) return null
+    const base = '/Users/' + encodeURIComponent(this.config.userId) + '/Items?' +
+      'ParentId=' + encodeURIComponent(parent) + '&Recursive=true&IncludeItemTypes=Episode&Limit=1' +
+      '&EnableUserData=true&Fields=ParentId%2CSeriesId%2CSeasonId&EnableImages=true'
+    const resume = this.parseItems(await this.requestObject(base +
+      '&Filters=IsResumable&IsPlayed=false&SortBy=DatePlayed&SortOrder=Descending', http.RequestMethod.GET))
+    if (resume.length > 0) return resume[0]
+    const unplayed = this.parseItems(await this.requestObject(base +
+      '&IsPlayed=false&SortBy=ParentIndexNumber%2CIndexNumber&SortOrder=Ascending', http.RequestMethod.GET))
+    if (unplayed.length > 0) return unplayed[0]
+    const first = this.parseItems(await this.requestObject(base +
+      '&SortBy=ParentIndexNumber%2CIndexNumber&SortOrder=Ascending', http.RequestMethod.GET))
+    return first.length > 0 ? first[0] : null
+  }
+
   async getLatestItems(limit: number = 16): Promise<EmbyItem[]> {
     const query: string[] = [
       'Recursive=true',
       'IncludeItemTypes=Movie%2CSeries%2CEpisode%2CVideo',
       'SortBy=DateCreated',
       'SortOrder=Descending',
-      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CBackdropImageTags',
+      'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags',
       'EnableImages=true',
       'EnableUserData=true',
       'ImageTypeLimit=1'
@@ -389,6 +467,8 @@ export class EmbyClient {
       item.name = EmbyClient.readString(value, 'Name')
       item.type = EmbyClient.readString(value, 'Type')
       item.parentId = EmbyClient.readString(value, 'ParentId')
+      item.seriesId = EmbyClient.readString(value, 'SeriesId')
+      item.seasonId = EmbyClient.readString(value, 'SeasonId')
       item.collectionType = EmbyClient.readString(value, 'CollectionType')
       item.isFolder = EmbyClient.readBoolean(value, 'IsFolder') || EmbyClient.isFolderType(item.type)
       item.runTimeTicks = EmbyClient.readNumber(value, 'RunTimeTicks')

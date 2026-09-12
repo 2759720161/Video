@@ -3,6 +3,7 @@ import { common } from '@kit.AbilityKit'
 import { HdsNavigation, HdsNavigationIconOptions, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
 import { EmbyItem, EmbyServerConfig } from '../../providers/emby/EmbyModels'
 import { EmbyProvider } from '../../providers/emby/EmbyProvider'
+import { EmbyLibraryPresentation } from '../../providers/emby/EmbyLibraryPresentation'
 import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { EmbySourceConfigCodec } from '../../providers/emby/EmbySourceConfig'
@@ -54,6 +55,8 @@ struct EmbyLibraryPage {
   @State private latestOnly: boolean = false
   @State private libraryRoot: boolean = false
   @State private collectionType: string = ''
+  @State private folderBrowse: boolean = false
+  @State private sortBy: string = 'DateCreated'
   @State private config: EmbyServerConfig | null = null
   @State private provider: EmbyProvider | null = null
   @State private items: EmbyItem[] = []
@@ -66,11 +69,9 @@ struct EmbyLibraryPage {
   @State private showSearch: boolean = false
   @State private globalSearchItems: EmbyItem[] = []
   @State private searchLoading: boolean = false
-  @State private selectedFilter: string = '全部'
   @State private resumeOnly: boolean = false
   @State private pageWidth: number = 360
   private scroller: Scroller = new Scroller()
-  private filters: string[] = ['全部', '电影', '剧集', '文件夹']
   private loadGeneration: number = 0
   private searchGeneration: number = 0
   private searchTimer: number = -1
@@ -91,6 +92,7 @@ struct EmbyLibraryPage {
       if (typeof params['collectionType'] === 'string') {
         this.collectionType = (params['collectionType'] as string).trim()
       }
+      if (params['browseMode'] === 'folders') this.folderBrowse = true
     }
     this.loadItems()
   }
@@ -180,7 +182,7 @@ struct EmbyLibraryPage {
       this.title
     const subTitle: string = this.isHome() ?
       (this.config === null || this.config!.userName.length === 0 ? '媒体中心' : this.config!.userName) :
-      this.items.length + ' 个项目'
+      this.items.length + ' 个' + (this.folderBrowse ? '目录项目' : EmbyLibraryPresentation.contentLabel(this.collectionType))
     const base: HdsNavigationTitleBarOptions = {
       style: buildImmersiveTitleBarStyle(this.hdsMaterialLevel),
       content: {
@@ -312,7 +314,7 @@ struct EmbyLibraryPage {
           ForEach(this.items, (library: EmbyItem) => {
             MediaShortcutTile({
               title: library.name,
-              subtitle: library.collectionType.length > 0 ? library.collectionType : '浏览媒体',
+              subtitle: EmbyLibraryPresentation.contentLabel(library.collectionType),
               iconKind: 'folder',
               tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.pageWidth),
               tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.pageWidth),
@@ -345,6 +347,7 @@ struct EmbyLibraryPage {
               MediaPosterCard({ title: item.name, subtitle: item.subtitle(),
                 artworkUrl: this.itemImageUrl(item, 500),
                 cardWidth: ResponsiveSizeClassResolver.posterWidth(this.pageWidth),
+                sharedTransitionId: this.artworkSharedTransitionId(item),
                 onCardClick: () => this.openItem(item) })
             }
           }, (item: EmbyItem) => sectionId + '_' + item.id)
@@ -393,40 +396,42 @@ struct EmbyLibraryPage {
   @Builder
   private LibraryContent(): void {
     Column({ space: 16 }) {
-      Scroll() {
-        Row({ space: 8 }) {
-          ForEach(this.filters, (filter: string) => {
-            Text(filter)
-              .fontSize(13)
-              .fontWeight(this.selectedFilter === filter ? FontWeight.Bold : FontWeight.Regular)
-              .fontColor(this.selectedFilter === filter ? $r('app.color.text_on_primary') : $r('app.color.text_secondary'))
-              .padding({ left: 16, right: 16, top: 9, bottom: 9 })
-              .borderRadius(18)
-              .backgroundColor(this.selectedFilter === filter ? $r('app.color.accent_blue') : $r('app.color.button_ghost_bg'))
-              .border({ width: 0.5, color: this.selectedFilter === filter ? $r('app.color.accent_blue') :
-                $r('app.color.card_specular_border') })
-              .onClick(() => this.selectedFilter = filter)
-          }, (filter: string) => filter)
-        }
-        .padding({ right: this.pagePadding() })
-      }
-      .width('calc(100% + ' + this.pagePadding() + 'vp)')
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-
       Row() {
-        Text(this.filteredItems().length + ' 个项目')
+        Text(this.items.length + ' 个' + (this.folderBrowse ? '目录项目' : EmbyLibraryPresentation.contentLabel(this.collectionType)))
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
           .layoutWeight(1)
-        Text('按名称排序').fontSize(12).fontColor($r('app.color.text_secondary'))
+        if (this.libraryRoot) {
+          Row({ space: 8 }) {
+            if (!this.folderBrowse) {
+              Text(this.sortBy === 'SortName' ? '按名称' : '最近添加')
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_secondary'))
+                .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+                .borderRadius(14)
+                .backgroundColor($r('app.color.button_ghost_bg'))
+                .onClick(() => this.toggleSort())
+            }
+            Text(this.folderBrowse ? '媒体视图' : '按文件夹浏览')
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.accent_blue'))
+              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+              .borderRadius(14)
+              .backgroundColor($r('app.color.button_ghost_bg'))
+              .onClick(() => this.folderBrowse ? this.openMediaMode() : this.openFolderMode())
+          }
+        } else {
+          Text('按名称排序').fontSize(12).fontColor($r('app.color.text_secondary'))
+        }
       }
       .width('100%')
 
-      if (this.filteredItems().length === 0) {
-        this.InlineEmptyState('当前分类没有可显示的内容')
+      if (this.items.length === 0) {
+        this.InlineEmptyState(this.folderBrowse ? '当前目录没有可显示的内容' : '当前媒体库没有可显示的内容')
       } else {
-        this.PosterGrid(this.filteredItems())
+        this.PosterGrid(this.items)
       }
     }
     .width('100%')
@@ -469,6 +474,7 @@ struct EmbyLibraryPage {
             MediaPosterCard({ title: item.name, subtitle: item.subtitle(),
               artworkUrl: this.itemImageUrl(item, 700),
               cardWidth: ResponsiveSizeClassResolver.posterWidth(this.pageWidth),
+              sharedTransitionId: this.artworkSharedTransitionId(item),
               onCardClick: () => this.openItem(item) })
           }
         }
@@ -482,14 +488,22 @@ struct EmbyLibraryPage {
 
   @Builder
   private LoadingState(): void {
-    PageLoadingState({ title: this.isHome() ? '正在同步媒体首页' : '正在读取“' + this.title + '”', minHeight: 420 })
+    Column() {
+      PageLoadingState({ title: this.isHome() ? '正在同步媒体首页' : '正在读取“' + this.title + '”', minHeight: 300 })
+    }
+    .width('100%').layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
   private ErrorState(): void {
-    PageErrorState({ title: '媒体库暂时不可用', message: this.errorText,
-      retryText: this.config === null ? '配置服务器' : '重新加载',
-      onRetry: () => this.config === null ? this.openSettings() : this.loadItems() })
+    Column() {
+      PageErrorState({ title: '媒体库暂时不可用', message: this.errorText,
+        retryText: this.config === null ? '配置服务器' : '重新加载',
+        onRetry: () => this.config === null ? this.openSettings() : this.loadItems() })
+    }
+    .width('100%').layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -532,29 +546,34 @@ struct EmbyLibraryPage {
         if (hasCachedHome) {
           this.loading = false
         }
-        this.items = await this.provider.getLibrariesRaw()
+        // Start the independent home requests together. Waiting for the
+        // library list before starting resume/latest adds a full server RTT.
+        const librariesTask: Promise<EmbyItem[]> = this.provider.getLibrariesRaw()
+        const resumeTask: Promise<EmbyItem[]> = this.loadResumeItems(this.provider)
+        const latestTask: Promise<EmbyItem[]> = this.loadLatestItems(this.provider)
+        this.items = await librariesTask
         if (generation !== this.loadGeneration) return
-        const tasks: Array<Promise<EmbyItem[]>> = [
-          this.loadResumeItems(this.provider),
-          this.loadLatestItems(this.provider)
-        ]
-        const results: EmbyItem[][] = await Promise.all(tasks)
+        const results: EmbyItem[][] = await Promise.all([resumeTask, latestTask])
         if (generation !== this.loadGeneration) return
         this.resumeItems = results[0]
         this.latestItems = results[1]
-        this.homeSections = await this.loadHomeSections(this.provider, this.items)
-        if (generation !== this.loadGeneration) return
-        await this.saveHomeCache()
+        // The library cards are useful as soon as the base lists arrive.
+        // Preview rows are independent and can fill in after first paint.
+        this.loading = false
+        void this.refreshHomeSections(this.provider, this.items, generation)
       } else {
         if (this.latestOnly) {
           this.items = await this.provider.getLatestItemsRaw(0)
         } else if (this.resumeOnly) {
           this.items = []
           this.resumeItems = await this.provider.getResumeItemsRaw()
+        } else if (this.libraryRoot && this.folderBrowse) {
+          this.items = await this.provider.getFolderChildrenRaw(this.parentId)
         } else if (this.libraryRoot) {
           // Library entry pages should show media posters, not the server's
           // physical folder tree. Nested item pages keep the old behavior.
-          this.items = await this.provider.getLibraryItemsRaw(this.parentId, 0, this.collectionType)
+          this.items = await this.provider.getLibraryItemsRaw(this.parentId, 0, this.collectionType,
+            this.sortBy, this.sortBy === 'SortName' ? 'Ascending' : 'Descending')
         } else {
           this.items = await this.provider.getItemsRaw(this.parentId)
         }
@@ -586,7 +605,7 @@ struct EmbyLibraryPage {
     if (itemId.length === 0 || this.config === null || this.provider === null || this.sourceId.length === 0) return
     try {
       const item = await this.provider.getItemRaw(itemId)
-      if (item !== null && !item.isFolder) await this.openItem(item)
+      if (item !== null) await this.openItem(item)
     } catch (_) {
       promptAction.showToast({ message: '无法播放该媒体' })
     }
@@ -644,6 +663,8 @@ struct EmbyLibraryPage {
       item.name = this.cachedString(value, 'name')
       item.type = this.cachedString(value, 'type')
       item.parentId = this.cachedString(value, 'parentId')
+      item.seriesId = this.cachedString(value, 'seriesId')
+      item.seasonId = this.cachedString(value, 'seasonId')
       item.collectionType = this.cachedString(value, 'collectionType')
       item.isFolder = this.cachedBoolean(value, 'isFolder')
       item.runTimeTicks = this.cachedNumber(value, 'runTimeTicks')
@@ -737,21 +758,23 @@ struct EmbyLibraryPage {
     return sections
   }
 
+  private async refreshHomeSections(provider: EmbyProvider, libraries: EmbyItem[], generation: number): Promise<void> {
+    try {
+      const sections = await this.loadHomeSections(provider, libraries)
+      if (generation !== this.loadGeneration) return
+      this.homeSections = sections
+      await this.saveHomeCache()
+    } catch (_) {
+      // Preview rows are secondary; keep the base home page usable if they fail.
+    }
+  }
+
   private async loadLibraryPreview(provider: EmbyProvider, library: EmbyItem): Promise<EmbyItem[]> {
     try {
       return await provider.getLibraryItemsRaw(library.id, 12, library.collectionType)
     } catch {
       return []
     }
-  }
-
-  private filteredItems(): EmbyItem[] {
-    const result: EmbyItem[] = []
-    for (let i = 0; i < this.items.length; i++) {
-      const item = this.items[i]
-      if (this.matchesFilter(item, this.selectedFilter)) result.push(item)
-    }
-    return result
   }
 
   private searchResults(): EmbyItem[] {
@@ -839,18 +862,12 @@ struct EmbyLibraryPage {
     }
   }
 
-  private matchesFilter(item: EmbyItem, filter: string): boolean {
-    if (filter === '全部') return true
-    if (filter === '文件夹') return item.isFolder
-    if (filter === '电影') return item.type === 'Movie' || item.type === 'Video'
-    if (filter === '剧集') {
-      return item.type === 'Series' || item.type === 'Season' || item.type === 'Episode'
-    }
-    return true
-  }
-
   private itemImageUrl(item: EmbyItem, maxWidth: number = 500): string {
     return this.provider === null ? '' : this.provider.imageUrlFor(item, maxWidth)
+  }
+
+  private artworkSharedTransitionId(item: EmbyItem): string {
+    return 'emby_artwork_' + this.sourceId + '_' + item.id
   }
 
   private heroImageUrl(item: EmbyItem, maxWidth: number = 1000): string {
@@ -870,11 +887,20 @@ struct EmbyLibraryPage {
   }
 
   private async openItem(item: EmbyItem, libraryRoot: boolean = false): Promise<void> {
-    if (item.isFolder) {
+    if (this.shouldOpenDetail(item)) {
+      if (this.sourceId.length === 0) throw new Error('Emby 媒体源未配置')
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/emby/EmbyDetailPage',
+        params: this.detailRouteParams(item)
+      })
+      return
+    }
+    if (this.shouldBrowseChildren(item)) {
       const params: Record<string, Object> = {
         'sourceId': this.sourceId,
         'parentId': item.id,
-        'title': item.name
+        'title': item.name,
+        'browseMode': 'folders'
       }
       if (libraryRoot) {
         params['libraryRoot'] = true
@@ -886,12 +912,29 @@ struct EmbyLibraryPage {
       })
       return
     }
-    if (this.config === null) return
-    if (this.sourceId.length === 0) throw new Error('Emby 媒体源未配置')
-    await this.getUIContext().getRouter().pushUrl({
-      url: 'pages/emby/EmbyDetailPage',
-      params: { sourceId: this.sourceId, itemId: item.id }
-    })
+  }
+
+  private shouldOpenDetail(item: EmbyItem): boolean {
+    return item.type === 'Series' || item.type === 'Season' ||
+      item.type === 'Movie' || item.type === 'Episode' || item.type === 'Video' || item.type === 'BoxSet'
+  }
+
+  private detailRouteParams(item: EmbyItem): Record<string, Object> {
+    const params: Record<string, Object> = { 'sourceId': this.sourceId, 'itemId': item.id }
+    if (item.type === 'Season' && item.seriesId.length > 0) {
+      params['itemId'] = item.seriesId
+      params['initialSeasonId'] = item.id
+    } else if (item.type === 'Episode' && item.seriesId.length > 0) {
+      params['itemId'] = item.seriesId
+      params['initialSeasonId'] = item.seasonId.length > 0 ? item.seasonId : item.parentId
+      params['initialEpisodeId'] = item.id
+      params['initialEpisodeIndex'] = item.indexNumber
+    }
+    return params
+  }
+
+  private shouldBrowseChildren(item: EmbyItem): boolean {
+    return !this.shouldOpenDetail(item) && item.isFolder
   }
 
   /** 续播入口直接交给统一播放器；没有进度的精选内容仍进入详情页。 */
@@ -958,6 +1001,30 @@ struct EmbyLibraryPage {
     this.getUIContext().getRouter().pushUrl({
       url: 'pages/emby/EmbyLibraryPage',
       params: params
+    })
+  }
+
+  private openFolderMode(): void {
+    if (!this.libraryRoot || this.parentId.length === 0) return
+    this.getUIContext().getRouter().pushUrl({
+      url: 'pages/emby/EmbyLibraryPage',
+      params: { 'sourceId': this.sourceId, 'parentId': this.parentId, 'title': this.title,
+        'libraryRoot': true, 'collectionType': this.collectionType, 'browseMode': 'folders' }
+    })
+  }
+
+  private toggleSort(): void {
+    if (!this.libraryRoot || this.folderBrowse) return
+    this.sortBy = this.sortBy === 'SortName' ? 'DateCreated' : 'SortName'
+    this.loadItems()
+  }
+
+  private openMediaMode(): void {
+    if (!this.libraryRoot || this.parentId.length === 0) return
+    this.getUIContext().getRouter().pushUrl({
+      url: 'pages/emby/EmbyLibraryPage',
+      params: { 'sourceId': this.sourceId, 'parentId': this.parentId, 'title': this.title,
+        'libraryRoot': true, 'collectionType': this.collectionType }
     })
   }
 

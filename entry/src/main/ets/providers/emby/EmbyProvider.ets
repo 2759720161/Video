@@ -9,7 +9,7 @@ import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
 import type { MediaProvider } from '../base/MediaProvider'
 import type { PlaybackResolver } from '../../core/playback/PlaybackResolver'
 import { EmbyClient } from './EmbyClient'
-import { EmbyItem, EmbyPlaybackContext, EmbyServerConfig } from './EmbyModels'
+import { EmbyItem, EmbyItemsPage, EmbyPlaybackContext, EmbyServerConfig } from './EmbyModels'
 import { EmbyPlaybackReporter } from './EmbyPlaybackReporter'
 import { EmbySourceConfigCodec } from './EmbySourceConfig'
 import { SecureCredentialStore } from '../../services/security/SecureCredentialStore'
@@ -49,14 +49,39 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
 
   async getResumeItemsRaw(): Promise<EmbyItem[]> { return this.client.getResumeItems() }
 
+  async getDetailPlaybackTargetRaw(parentId: string): Promise<EmbyItem | null> {
+    return this.client.getDetailPlaybackTarget(EmbyProvider.normalizeText(parentId))
+  }
+
   async getLibraryItemsRaw(parentId: string, limit: number = 0,
-    collectionType: string = ''): Promise<EmbyItem[]> {
+    collectionType: string = '', sortBy: string = 'DateCreated',
+    sortOrder: string = 'Descending'): Promise<EmbyItem[]> {
     return this.client.getLibraryItems(EmbyProvider.normalizeText(parentId), limit,
-      EmbyProvider.normalizeText(collectionType))
+      EmbyProvider.normalizeText(collectionType), EmbyProvider.normalizeText(sortBy),
+      EmbyProvider.normalizeText(sortOrder))
   }
 
   async getItemsRaw(parentId: string): Promise<EmbyItem[]> {
     return this.client.getItems(EmbyProvider.normalizeText(parentId))
+  }
+
+  async getSeriesSeasonsRaw(seriesId: string): Promise<EmbyItem[]> {
+    return this.client.getSeriesSeasons(EmbyProvider.normalizeText(seriesId))
+  }
+
+  async getSeasonEpisodesRaw(seriesId: string, seasonId: string): Promise<EmbyItem[]> {
+    return this.client.getSeasonEpisodes(EmbyProvider.normalizeText(seriesId),
+      EmbyProvider.normalizeText(seasonId))
+  }
+
+  async getSeasonEpisodesPageRaw(seriesId: string, seasonId: string,
+    startIndex: number = 0, limit: number = 0): Promise<EmbyItemsPage> {
+    return this.client.getSeasonEpisodesPage(EmbyProvider.normalizeText(seriesId),
+      EmbyProvider.normalizeText(seasonId), startIndex, limit)
+  }
+
+  async getFolderChildrenRaw(parentId: string): Promise<EmbyItem[]> {
+    return this.client.getFolderChildren(EmbyProvider.normalizeText(parentId))
   }
 
   async getEpisodeCount(parentId: string): Promise<number> {
@@ -96,13 +121,17 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
 
   async getHome(): Promise<MediaSection[]> {
     const sections: MediaSection[] = []
-    const libraries = await this.client.getLibraries()
+    // These endpoints are independent. Running them concurrently avoids
+    // making the home snapshot wait for two full remote response waves.
+    const librariesTask: Promise<EmbyItem[]> = this.client.getLibraries()
+    const latestTask: Promise<EmbyItem[]> = this.client.getLatestItems()
+    const libraries = await librariesTask
     const librarySection = new MediaSection()
     librarySection.id = 'libraries'
     librarySection.title = '媒体库'
     for (let i = 0; i < libraries.length; i++) librarySection.items.push(this.toMediaItem(libraries[i]))
     sections.push(librarySection)
-    const latest = await this.client.getLatestItems()
+    const latest = await latestTask
     const latestSection = new MediaSection()
     latestSection.id = 'latest'
     latestSection.title = '最近添加'
@@ -252,6 +281,9 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     result.sourceId = this.source.id
     result.id = item.id
     result.parentId = item.parentId
+    result.seriesId = item.seriesId
+    result.seasonId = item.seasonId
+    result.indexNumber = item.indexNumber
     result.title = item.name
     result.subtitle = item.subtitle()
     result.overview = item.overview
@@ -296,6 +328,7 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
       case 'Season': return MediaItemType.SEASON
       case 'Episode': return MediaItemType.EPISODE
       case 'CollectionFolder': return MediaItemType.COLLECTION
+      case 'BoxSet': return MediaItemType.COLLECTION
       case 'Folder': return MediaItemType.FOLDER
       default: return MediaItemType.VIDEO
     }
