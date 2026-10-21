@@ -3,6 +3,7 @@ import { fileIo, fileUri, picker } from '@kit.CoreFileKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { LocalVideoRecord } from '../models/LocalVideoRecord'
 import { PreferencesStore } from '../store/PreferencesStore'
+import { LocalMediaLibraryChangeSignal } from '../store/LocalMediaLibraryChangeSignal'
 import { Logger } from '../utils/Logger'
 
 const logger = new Logger('UserDownloadFolder')
@@ -14,9 +15,21 @@ class M3u8FolderScanNode {
   relativePath: string = ''
 }
 
+export enum OwnFolderCreationStatus {
+  CREATED = 'created',
+  ALREADY_EXISTS = 'already_exists',
+  CANCELLED = 'cancelled',
+  FAILED = 'failed'
+}
+
+export class OwnFolderCreationResult {
+  status: OwnFolderCreationStatus = OwnFolderCreationStatus.FAILED
+  path: string = ''
+}
+
 export class UserDownloadFolder {
   private static ownFolderPath: string = ''
-  private static folderActivated: boolean = false
+  private static creationTask: Promise<OwnFolderCreationResult> | null = null
   private static m3u8PromptSuppressedPaths: Set<string> = new Set()
 
   /** Returns whether the m3u8 confirmation has been disabled for this folder. */
@@ -49,45 +62,62 @@ export class UserDownloadFolder {
   /** Clears the cached Download authorization after the system revokes its access. */
   static resetOwnFolderAccess(): void {
     UserDownloadFolder.ownFolderPath = ''
-    UserDownloadFolder.folderActivated = false
     logger.info('已清除应用专属目录缓存授权')
   }
 
-  static async ensureOwnFolder(context: common.UIAbilityContext, forceReauthorize: boolean = false): Promise<string> {
-    if (!forceReauthorize && UserDownloadFolder.folderActivated && UserDownloadFolder.ownFolderPath.length > 0) {
-      return UserDownloadFolder.ownFolderPath
-    }
-
+  /** Read-only lookup. Browsing and refresh must never open the save picker or create directories. */
+  static getExistingOwnFolder(): string {
     const bundleName = UserDownloadFolder.getBundleName()
-    if (bundleName.length === 0) {
-      return ''
-    }
-
-    const ownFolderUri = OWN_FOLDER_URI_PREFIX + bundleName
-    const ownPath = new fileUri.FileUri(ownFolderUri).path
-
+    if (bundleName.length === 0) return ''
     try {
-      if (!forceReauthorize && fileIo.accessSync(ownPath)) {
+      const ownPath = new fileUri.FileUri(OWN_FOLDER_URI_PREFIX + bundleName).path
+      // Recheck the actual directory even when cached: the user may delete it outside the app.
+      if (fileIo.accessSync(ownPath) && fileIo.statSync(ownPath).isDirectory()) {
         UserDownloadFolder.ownFolderPath = ownPath
-        UserDownloadFolder.folderActivated = true
-        logger.info('Download包名目录已存在: %{public}s', ownPath)
         return ownPath
       }
-    } catch (_err) {
-    }
+    } catch (_err) {}
+    UserDownloadFolder.ownFolderPath = ''
+    return ''
+  }
 
+  /** Explicit user action from Services. Concurrent taps share one system save operation. */
+  static async createOwnFolder(context: common.UIAbilityContext): Promise<OwnFolderCreationResult> {
+    if (UserDownloadFolder.creationTask !== null) return UserDownloadFolder.creationTask
+    const task = UserDownloadFolder.createOwnFolderInternal(context)
+    UserDownloadFolder.creationTask = task
+    try {
+      return await task
+    } finally {
+      UserDownloadFolder.creationTask = null
+    }
+  }
+
+  private static async createOwnFolderInternal(context: common.UIAbilityContext): Promise<OwnFolderCreationResult> {
+    const result = new OwnFolderCreationResult()
+    const existingPath = UserDownloadFolder.getExistingOwnFolder()
+    if (existingPath.length > 0) {
+      result.status = OwnFolderCreationStatus.ALREADY_EXISTS
+      result.path = existingPath
+      return result
+    }
+    if (UserDownloadFolder.getBundleName().length === 0) return result
     try {
       const documentSaveOptions = new picker.DocumentSaveOptions()
       documentSaveOptions.pickerMode = picker.DocumentPickerMode.DOWNLOAD
       documentSaveOptions.newFileNames = ['.placeholder']
       const documentViewPicker = new picker.DocumentViewPicker(context)
       const saveResult: Array<string> = await documentViewPicker.save(documentSaveOptions)
+      if (saveResult.length === 0) {
+        result.status = OwnFolderCreationStatus.CANCELLED
+        return result
+      }
       if (saveResult.length > 0) {
         const resultUri = saveResult[0]
         const resultPath = new fileUri.FileUri(resultUri).path
         const parentDir = resultPath.substring(0, resultPath.lastIndexOf('/'))
-        UserDownloadFolder.ownFolderPath = parentDir
-        UserDownloadFolder.folderActivated = true
+        const ownPath = UserDownloadFolder.getExistingOwnFolder()
+        if (ownPath.length === 0 || parentDir !== ownPath) return result
 
         try {
           const placeholderPath = resultPath
@@ -98,24 +128,22 @@ export class UserDownloadFolder {
         } catch (_err) {
         }
 
-        logger.info('Download包名目录激活成功: %{public}s', parentDir)
-        return parentDir
+        logger.info('Download包名目录创建成功: %{public}s', parentDir)
+        result.status = OwnFolderCreationStatus.CREATED
+        result.path = ownPath
+        LocalMediaLibraryChangeSignal.notifyChanged()
+        return result
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      logger.warn('Download包名目录激活失败: %{public}s', msg)
+      logger.warn('Download包名目录创建失败: %{public}s', msg)
     }
 
-    return ''
-  }
-
-  static async reactivateOwnFolder(context: common.UIAbilityContext): Promise<string> {
-    UserDownloadFolder.resetOwnFolderAccess()
-    return UserDownloadFolder.ensureOwnFolder(context, true)
+    return result
   }
 
   static async scanOwnVideoFiles(context: common.UIAbilityContext): Promise<LocalVideoRecord[] | null> {
-    const folderPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const folderPath = UserDownloadFolder.getExistingOwnFolder()
     if (folderPath.length === 0) {
       return null
     }
@@ -176,7 +204,7 @@ export class UserDownloadFolder {
   /** Finds a local HLS package anywhere below the app-owned Download folder. */
   static async findM3u8Package(context: common.UIAbilityContext,
     relativeDirectory: string = '', exactDirectory: boolean = false): Promise<M3u8PackageInfo | null> {
-    const rootPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const rootPath = UserDownloadFolder.getExistingOwnFolder()
     if (rootPath.length === 0) {
       return null
     }
@@ -207,7 +235,7 @@ export class UserDownloadFolder {
 
   /** Returns selectable m3u8 folders inside the application-owned directory. */
   static async listM3u8FolderChoices(context: common.UIAbilityContext): Promise<M3u8FolderChoice[] | null> {
-    const rootPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const rootPath = UserDownloadFolder.getExistingOwnFolder()
     if (rootPath.length === 0) {
       return null
     }
@@ -265,7 +293,7 @@ export class UserDownloadFolder {
 
   /** Lists only the immediate folders and playable videos of one app-owned directory. */
   static async listOwnDirectory(context: common.UIAbilityContext, relativeDirectory: string = ''): Promise<UserFolderEntry[] | null> {
-    const rootPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const rootPath = UserDownloadFolder.getExistingOwnFolder()
     if (rootPath.length === 0) {
       return null
     }
@@ -349,7 +377,7 @@ export class UserDownloadFolder {
     if (targetUri.length === 0) {
       return null
     }
-    const rootPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const rootPath = UserDownloadFolder.getExistingOwnFolder()
     if (rootPath.length === 0) {
       return null
     }
@@ -392,7 +420,7 @@ export class UserDownloadFolder {
       return '名称不能包含 / \\ : * ? " < > |'
     }
 
-    const rootPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const rootPath = UserDownloadFolder.getExistingOwnFolder()
     if (rootPath.length === 0) {
       return '应用专属目录暂不可访问'
     }
@@ -453,7 +481,7 @@ export class UserDownloadFolder {
   }
 
   static async isM3u8PackageDirectory(context: common.UIAbilityContext, relativeDirectory: string): Promise<boolean> {
-    const rootPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const rootPath = UserDownloadFolder.getExistingOwnFolder()
     if (rootPath.length === 0) {
       return false
     }

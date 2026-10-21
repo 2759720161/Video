@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/Index",
+    "pages/home/SearchPage",
     "pages/library/LibraryPage",
     "pages/local/FolderPage",
     "pages/local/ContinueWatchingPage",
@@ -11,11 +12,15 @@
     "pages/sources/EmbySourceEditPage",
     "pages/sources/SourceBrowserPage",
     "pages/sources/WebDavSourceEditPage",
+    "pages/catvod/CatVodSourceEditPage",
+    "pages/catvod/CatVodBrowserPage",
+    "pages/catvod/CatVodDetailPage",
     "pages/tools/M3u8ConverterPage",
     "pages/player/PlayerPage",
     "pages/settings/PlayerSettingsPage",
     "pages/settings/SubtitleSettingsPage",
     "pages/settings/AppearanceSettingsPage",
-    "pages/settings/AboutPage"
+    "pages/settings/AboutPage",
+    "pages/catvod/CatNodeSourceEditPage"
   ]
 }

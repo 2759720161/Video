@@ -517,7 +517,7 @@ export class AVPlayerEngine implements IPlayerEngine {
     }
   }
 
-  async selectTrack(index: number): Promise<void> {
+  async selectTrack(index: number, _type?: PlayerTrackType): Promise<void> {
     if (this.avPlayer !== null && index >= 0) {
       await this.avPlayer.selectTrack(index)
     }

@@ -34,6 +34,14 @@ export class EmbyUserData {
   played: boolean = false
 }
 
+export class EmbyPerson {
+  id: string = ''
+  name: string = ''
+  type: string = ''
+  role: string = ''
+  primaryImageTag: string = ''
+}
+
 export class EmbyItem {
   id: string = ''
   name: string = ''
@@ -54,6 +62,12 @@ export class EmbyItem {
   recursiveItemCount: number = 0
   seriesName: string = ''
   overview: string = ''
+  genres: string[] = []
+  studios: string[] = []
+  people: EmbyPerson[] = []
+  communityRating: number = 0
+  officialRating: string = ''
+  premiereDate: string = ''
   imageItemId: string = ''
   primaryImageTag: string = ''
   backdropImageTag: string = ''
@@ -152,4 +166,8 @@ export class EmbyPlaybackRoute {
   playSessionId: string = ''
   playMethod: string = 'DirectStream'
   requiredHttpHeaders: Record<string, string> = {}
+  audioTrackOrdinal: number = -1
+  subtitleTrackOrdinal: number = -2
+  subtitleUrl: string = ''
+  subtitleName: string = ''
 }

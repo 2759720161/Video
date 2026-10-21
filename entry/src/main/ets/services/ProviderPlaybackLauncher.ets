@@ -93,7 +93,7 @@ export class ProviderPlaybackLauncher {
       const key = sourceId + '\u0000' + valueId
       if (ids[key] === true) continue
       ids[key] = true
-      queue.push(ProviderPlaybackLauncher.toQueueItem(sourceId, value,
+      queue.push(ProviderPlaybackLauncher.toQueueItem(sourceId, valueId === currentId ? current : value,
         startFromBeginning && valueId === currentId))
     }
     if (queue.findIndex((value: PlaybackQueueItem) => value.mediaId === currentId) < 0) {
@@ -115,6 +115,7 @@ export class ProviderPlaybackLauncher {
     queueItem.positionMs = queueItem.durationMs > 0
       ? Math.min(normalizedPositionMs, queueItem.durationMs) : normalizedPositionMs
     queueItem.variantId = ProviderPlaybackLauncher.normalizeText(item.variantId)
+    queueItem.trackSelection = item.trackSelection
     for (let i = 0; i < item.variants.length; i++) {
       const variant = item.variants[i]
       if (variant !== null && typeof variant === 'object' && variant.id.trim().length > 0) {

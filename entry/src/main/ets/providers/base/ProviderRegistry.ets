@@ -5,6 +5,8 @@ import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { LocalProvider } from '../local/LocalProvider'
 import { EmbyProvider } from '../emby/EmbyProvider'
 import { WebDavProvider } from '../webdav/WebDavProvider'
+import { CatVodProvider } from '../catvod/CatVodProvider'
+import { CatNodeProvider } from '../catvod/CatNodeProvider'
 import { Logger } from '../../utils/Logger'
 
 export type MediaProviderFactory = (source: MediaSourceInstance,
@@ -47,6 +49,8 @@ export class ProviderRegistry {
       context === null ? null : new LocalProvider(context))
     ProviderRegistry.register('emby', async (source, _context) => EmbyProvider.fromSource(source))
     ProviderRegistry.register('webdav', async (source, _context) => WebDavProvider.fromSource(source))
+    ProviderRegistry.register('catvod', async (source, _context) => CatVodProvider.fromSource(source))
+    ProviderRegistry.register('catnode', async (source, context) => CatNodeProvider.create(source, context))
   }
 
   static supports(providerType: string): boolean {

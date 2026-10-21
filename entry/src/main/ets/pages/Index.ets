@@ -1,4 +1,5 @@
-import { LibraryPage } from './library/LibraryPage'
+import { HomePage } from './home/HomePage'
+import { ServicesContent } from './sources/ServicesContent'
 import { SettingsPage } from './settings/SettingsPage'
 import { HdsAnimationMode, HdsTabs, HdsTabsController, HdsTabsFloatingStyle } from '@kit.UIDesignKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
@@ -12,6 +13,7 @@ import {
 @Entry
 @Component
 struct Index {
+  @State private pageVisible: boolean = true
   @StorageLink('currentTab') currentTab: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink('bottomTabAutoHide') @Watch('onBottomTabAutoHideChanged')
@@ -25,13 +27,21 @@ struct Index {
   private tabsController: HdsTabsController = new HdsTabsController()
   private bottomTabControllerHidden: boolean = false
 
+  onPageShow(): void { this.pageVisible = true }
+  onPageHide(): void { this.pageVisible = false }
+
   build() {
     Column() {
       HdsTabs({ controller: this.tabsController, index: this.currentTab }) {
         TabContent() {
-          LibraryPage({ isActive: this.currentTab === 0 })
+          HomePage({ isActive: this.currentTab === 0 && this.pageVisible })
         }
-        .tabBar(this.tabStyle($r('sys.symbol.folder'), $r('sys.symbol.folder_fill'), '媒体库'))
+        .tabBar(this.tabStyle($r('sys.symbol.house'), $r('sys.symbol.house_fill'), '首页'))
+
+        TabContent() {
+          ServicesContent({ embedded: true })
+        }
+        .tabBar(this.tabStyle($r('sys.symbol.externaldrive'), $r('sys.symbol.externaldrive'), '服务'))
 
         TabContent() {
           SettingsPage()
@@ -97,7 +107,7 @@ struct Index {
 
   private floatingStyle(): HdsTabsFloatingStyle {
     return {
-      barWidth: { smallWidth: 133, mediumWidth: 152, largeWidth: 172 },
+      barWidth: { smallWidth: 232, mediumWidth: 264, largeWidth: 300 },
       barBottomMargin: this.bottomSafeHeight + 26,
       gradientMask: { maskColor: $r('app.color.hds_tab_gradient_mask'), maskHeight: 108 },
       thermoCtrl: true,

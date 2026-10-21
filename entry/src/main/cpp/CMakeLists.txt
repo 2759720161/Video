@@ -71,3 +71,30 @@ set_target_properties(mpv_napi PROPERTIES
     BUILD_RPATH_USE_ORIGIN FALSE
     SKIP_BUILD_RPATH TRUE
 )
+
+# Node headers are scoped to their own compilation unit: they declare a different
+# Node-API ABI from HarmonyOS native_api.h. Existing mpv compilation is untouched.
+set(CATNODE_ROOT "${VIDEO_PROJECT_ROOT}/native/node")
+set(CATNODE_HEADERS "${CATNODE_ROOT}/vendor/node-v24.2.0/include/node")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CATNODE_ROOT}/dist/patched/runtime-info.cmake")
+set(CATNODE_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/${OHOS_ARCH}/libnode.so.137")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CATNODE_LIBRARY}")
+if(OHOS_ARCH STREQUAL "arm64-v8a")
+    if(NOT EXISTS "${CATNODE_LIBRARY}" OR NOT EXISTS "${CATNODE_HEADERS}/node.h")
+        message(FATAL_ERROR "Prepare the patched Node runtime and matching headers first; see native/node/README.md")
+    endif()
+    add_library(catnode_runtime SHARED IMPORTED)
+    set_target_properties(catnode_runtime PROPERTIES IMPORTED_LOCATION "${CATNODE_LIBRARY}")
+    add_library(catnode_napi SHARED catnode_napi.cpp catnode_runtime.cpp)
+    set_source_files_properties(catnode_runtime.cpp PROPERTIES
+        COMPILE_FLAGS "-std=c++20"
+        INCLUDE_DIRECTORIES "${CATNODE_HEADERS}")
+    target_link_libraries(catnode_napi PRIVATE ace_napi.z catnode_runtime libc++_shared.so)
+    if(EXISTS "${CATNODE_ROOT}/dist/patched/runtime-info.cmake")
+        include("${CATNODE_ROOT}/dist/patched/runtime-info.cmake")
+        file(SHA256 "${CATNODE_LIBRARY}" CATNODE_ACTUAL_HASH)
+        if(CATNODE_IOURING_DISABLED AND CATNODE_ACTUAL_HASH STREQUAL CATNODE_RUNTIME_SHA256)
+            target_compile_definitions(catnode_napi PRIVATE CATNODE_SANDBOX_READY=1)
+        endif()
+    endif()
+endif()

@@ -2,11 +2,13 @@ import { http } from '@kit.NetworkKit'
 import {
   EmbyItem,
   EmbyItemsPage,
+  EmbyPerson,
   EmbyPlaybackContext,
   EmbyPlaybackRoute,
   EmbyServerConfig
 } from './EmbyModels'
 import { EmbyMediaSource, EmbyPlaybackInfo } from './EmbyPlaybackInfo'
+import { PlaybackTrackSelection } from '../../core/playback/PlaybackTrackSelection'
 import { EmbyPlaybackMode, EmbyPlaybackPolicy } from './EmbyPlaybackPolicy'
 import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 import { EmbyLibraryPresentation } from './EmbyLibraryPresentation'
@@ -61,7 +63,8 @@ export class EmbyClient {
     if (normalizedItemId.length === 0) return null
     const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items/' + encodeURIComponent(normalizedItemId) +
       '?Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags' +
-      '%2CChildCount%2CRecursiveItemCount&EnableImages=true&EnableUserData=true'
+      '%2CChildCount%2CRecursiveItemCount%2CPeople%2CGenres%2CStudios%2CCommunityRating' +
+      '%2COfficialRating%2CPremiereDate&EnableImages=true&EnableUserData=true'
     const value = await this.requestObject(path, http.RequestMethod.GET)
     const items = this.parseItems({ 'Items': [value] })
     return items.length === 0 ? null : items[0]
@@ -73,10 +76,26 @@ export class EmbyClient {
       '&Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags' +
       '&EnableImages=true&EnableUserData=true'
     return this.parseItems(await this.requestObject(query, http.RequestMethod.GET))
+      .filter((item: EmbyItem) => item.type !== 'Episode')
   }
 
   async getItems(parentId: string, limit: number = 0, recursive: boolean = false,
     itemTypes: string = '', sortBy: string = 'SortName', sortOrder: string = 'Ascending'): Promise<EmbyItem[]> {
+    return (await this.getItemsPage(parentId, 0, limit, recursive, itemTypes, sortBy, sortOrder)).items
+  }
+
+  async getSimilarItems(itemId: string, limit: number = 12): Promise<EmbyItem[]> {
+    const normalizedItemId = EmbyClient.normalizeText(itemId)
+    if (normalizedItemId.length === 0) return []
+    const path = '/Items/' + encodeURIComponent(normalizedItemId) + '/Similar?UserId=' +
+      encodeURIComponent(this.config.userId) + '&Limit=' + Math.max(1, Math.floor(limit)) +
+      '&Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags' +
+      '&EnableImages=true&EnableUserData=true'
+    return this.parseItems(await this.requestObject(path, http.RequestMethod.GET))
+  }
+
+  async getItemsPage(parentId: string, startIndex: number = 0, limit: number = 40, recursive: boolean = false,
+    itemTypes: string = '', sortBy: string = 'SortName', sortOrder: string = 'Ascending'): Promise<EmbyItemsPage> {
     const normalizedParentId = EmbyClient.normalizeText(parentId)
     const query: string[] = [
       'ParentId=' + encodeURIComponent(normalizedParentId),
@@ -86,6 +105,8 @@ export class EmbyClient {
       'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags%2CChildCount%2CRecursiveItemCount',
       'EnableImages=true',
       'EnableUserData=true',
+      'EnableTotalRecordCount=true',
+      'StartIndex=' + Math.max(0, Math.floor(startIndex)),
       'ImageTypeLimit=1'
     ]
     const normalizedItemTypes = EmbyClient.normalizeText(itemTypes)
@@ -97,7 +118,7 @@ export class EmbyClient {
     }
     const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items?' + query.join('&')
     const response = await this.requestObject(path, http.RequestMethod.GET)
-    return this.parseItems(response)
+    return this.itemsPage(response, startIndex)
   }
 
   /** Series metadata hierarchy; unlike getItems(), this never treats a show as a physical folder. */
@@ -192,10 +213,16 @@ export class EmbyClient {
   }
 
   async getResumeItems(limit: number = 12): Promise<EmbyItem[]> {
+    return (await this.getResumeItemsPage(0, limit)).items
+  }
+
+  async getResumeItemsPage(startIndex: number = 0, limit: number = 40): Promise<EmbyItemsPage> {
     const query: string[] = [
       'Recursive=true',
       'MediaTypes=Video',
       'Limit=' + Math.max(1, limit),
+      'StartIndex=' + Math.max(0, Math.floor(startIndex)),
+      'EnableTotalRecordCount=true',
       'Fields=Overview%2CPrimaryImageAspectRatio%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags',
       'EnableImages=true',
       'EnableUserData=true',
@@ -203,7 +230,7 @@ export class EmbyClient {
     ]
     const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items/Resume?' + query.join('&')
     const response = await this.requestObject(path, http.RequestMethod.GET)
-    return this.parseItems(response)
+    return this.itemsPage(response, startIndex)
   }
 
   /** Resolve a show's/season's watch target independently of the visible episode page. */
@@ -243,6 +270,35 @@ export class EmbyClient {
     return this.parseItems(response)
   }
 
+  async getLatestLibraryItems(parentId: string, limit: number = 10): Promise<EmbyItem[]> {
+    const path = '/Users/' + encodeURIComponent(this.config.userId) + '/Items/Latest?ParentId=' +
+      encodeURIComponent(parentId) + '&Limit=' + Math.max(1, limit) +
+      '&GroupItems=true&MediaTypes=Video&EnableImages=true&EnableUserData=true' +
+      '&Fields=Overview%2CParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags'
+    return this.parseItems(await this.requestObject(path, http.RequestMethod.GET, null, true, true))
+  }
+
+  async getNextUpItems(limit: number = 12): Promise<EmbyItem[]> {
+    return (await this.getNextUpItemsPage(0, limit)).items
+  }
+
+  async getNextUpItemsPage(startIndex: number = 0, limit: number = 40): Promise<EmbyItemsPage> {
+    const path = '/Shows/NextUp?UserId=' + encodeURIComponent(this.config.userId) +
+      '&EnableImages=true&EnableUserData=true&Fields=ParentId%2CSeriesId%2CSeasonId%2CBackdropImageTags' +
+      '&StartIndex=' + Math.max(0, Math.floor(startIndex)) + '&EnableTotalRecordCount=true' +
+      (limit > 0 ? '&Limit=' + Math.floor(limit) : '')
+    return this.itemsPage(await this.requestObject(path, http.RequestMethod.GET), startIndex)
+  }
+
+  private itemsPage(response: Record<string, Object>, startIndex: number): EmbyItemsPage {
+    const page = new EmbyItemsPage()
+    page.items = this.parseItems(response)
+    page.startIndex = Math.max(0, Math.floor(startIndex))
+    page.totalRecordCount = Math.max(page.startIndex + page.items.length,
+      Math.floor(EmbyClient.readNumber(response, 'TotalRecordCount')))
+    return page
+  }
+
   primaryImageUrl(item: EmbyItem, maxWidth: number = 500): string {
     if (item.imageItemId.length === 0 || item.primaryImageTag.length === 0) {
       return ''
@@ -263,6 +319,13 @@ export class EmbyClient {
     if (item.thumbnailItemId.length === 0 || item.thumbnailImageTag.length === 0) return ''
     return this.config.baseUrl + '/Items/' + encodeURIComponent(item.thumbnailItemId) + '/Images/Thumb' +
       '?maxWidth=' + maxWidth + '&quality=85&tag=' + encodeURIComponent(item.thumbnailImageTag) +
+      '&api_key=' + encodeURIComponent(this.config.accessToken)
+  }
+
+  personImageUrl(person: EmbyPerson, maxWidth: number = 240): string {
+    if (person.id.length === 0 || person.primaryImageTag.length === 0) return ''
+    return this.config.baseUrl + '/Items/' + encodeURIComponent(person.id) + '/Images/Primary' +
+      '?maxWidth=' + maxWidth + '&quality=85&tag=' + encodeURIComponent(person.primaryImageTag) +
       '&api_key=' + encodeURIComponent(this.config.accessToken)
   }
 
@@ -293,7 +356,14 @@ export class EmbyClient {
     return result
   }
 
-  async getPlaybackRoute(item: EmbyItem, variantId: string = ''): Promise<EmbyPlaybackRoute> {
+  async getPlaybackSources(item: EmbyItem): Promise<EmbyMediaSource[]> {
+    if (!this.playbackInfoCache[item.id]) await this.getPlaybackVariants(item)
+    const info = this.playbackInfoCache[item.id]
+    return info ? info.mediaSources : []
+  }
+
+  async getPlaybackRoute(item: EmbyItem, variantId: string = '',
+    selection: PlaybackTrackSelection | null = null): Promise<EmbyPlaybackRoute> {
     let info = this.playbackInfoCache[item.id]
     if (info === undefined || info === null) {
       const path = '/Items/' + encodeURIComponent(item.id) + '/PlaybackInfo?UserId=' +
@@ -361,6 +431,39 @@ export class EmbyClient {
     route.playSessionId = playSessionId
     route.playMethod = playMethod
     route.requiredHttpHeaders = this.buildPlaybackHeaders(source.requiredHttpHeaders)
+    const serverTranscoding = playMethod === 'Transcode' && source.transcodingUrl.length > 0
+    const resolvedVariantId = source.id || 'source_' + info.mediaSources.indexOf(source)
+    if (selection !== null && selection.variantId === requestedVariantId && selection.variantId === resolvedVariantId) {
+      const audioTracks = source.tracks.filter((track) => track.type === 'Audio' && !track.isExternal)
+      const subtitleTracks = source.tracks.filter((track) => track.type === 'Subtitle' && !track.isExternal)
+      const audioOrdinal = audioTracks.findIndex((track) => track.index === selection.audioIndex)
+      const subtitle = source.tracks.find((track) => track.type === 'Subtitle' && track.index === selection.subtitleIndex)
+      route.audioTrackOrdinal = audioOrdinal
+      if (serverTranscoding && audioOrdinal >= 0) {
+        route.url = EmbyClient.replaceQuery(route.url, 'AudioStreamIndex', String(selection.audioIndex))
+        route.audioTrackOrdinal = 0
+      }
+      if (selection.subtitleIndex === -1) {
+        route.subtitleTrackOrdinal = -1
+        if (serverTranscoding) route.url = EmbyClient.replaceQuery(route.url, 'SubtitleStreamIndex', '-1')
+      } else if (subtitle !== undefined) {
+        const bitmapSubtitle = ['pgssub', 'hdmv_pgs_subtitle', 'dvdsub', 'dvd_subtitle', 'dvbsub', 'dvb_subtitle'].indexOf(subtitle.codec.toLowerCase()) >= 0
+        if (serverTranscoding && bitmapSubtitle) {
+          route.url = EmbyClient.replaceQuery(route.url, 'SubtitleStreamIndex', String(subtitle.index))
+          route.url = EmbyClient.replaceQuery(route.url, 'SubtitleMethod', 'Encode')
+        } else if (subtitle.isExternal || serverTranscoding) {
+          const format = subtitle.codec === 'ass' || subtitle.codec === 'ssa' ? subtitle.codec : 'srt'
+          route.subtitleUrl = this.config.baseUrl + '/Videos/' + encodeURIComponent(item.id) + '/' +
+            encodeURIComponent(mediaSourceId) + '/Subtitles/' + subtitle.index + '/Stream.' + format +
+            '?api_key=' + encodeURIComponent(this.config.accessToken)
+          route.subtitleName = subtitle.label() + '.' + format
+          route.subtitleTrackOrdinal = -1
+          if (serverTranscoding) route.url = EmbyClient.replaceQuery(route.url, 'SubtitleStreamIndex', '-1')
+        } else {
+          route.subtitleTrackOrdinal = subtitleTracks.findIndex((track) => track.index === subtitle.index)
+        }
+      }
+    }
     route.context.itemId = item.id
     route.context.mediaSourceId = mediaSourceId
     route.context.playSessionId = playSessionId
@@ -402,7 +505,8 @@ export class EmbyClient {
   }
 
   private async requestObject(path: string, method: http.RequestMethod,
-    body: Record<string, Object> | null = null, authenticated: boolean = true): Promise<Record<string, Object>> {
+    body: Record<string, Object> | null = null, authenticated: boolean = true,
+    acceptItemArray: boolean = false): Promise<Record<string, Object>> {
     const request = http.createHttp()
     try {
       const headers: Record<string, string> = {
@@ -435,6 +539,7 @@ export class EmbyClient {
         return {}
       }
       const parsed: Object = JSON.parse(raw)
+      if (acceptItemArray && Array.isArray(parsed)) return { 'Items': parsed }
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error('Emby 响应格式无效')
       }
@@ -480,6 +585,26 @@ export class EmbyClient {
       item.recursiveItemCount = EmbyClient.readNumber(value, 'RecursiveItemCount')
       item.seriesName = EmbyClient.readString(value, 'SeriesName')
       item.overview = EmbyClient.readString(value, 'Overview')
+      item.genres = EmbyClient.readStringArray(value, 'Genres')
+      item.communityRating = EmbyClient.readNumber(value, 'CommunityRating')
+      item.officialRating = EmbyClient.readString(value, 'OfficialRating')
+      item.premiereDate = EmbyClient.readString(value, 'PremiereDate')
+      const studioValues = EmbyClient.readObjectArray(value, 'Studios')
+      for (let studioIndex = 0; studioIndex < studioValues.length; studioIndex++) {
+        const studioName = EmbyClient.readString(studioValues[studioIndex], 'Name')
+        if (studioName.length > 0) item.studios.push(studioName)
+      }
+      const peopleValues = EmbyClient.readObjectArray(value, 'People')
+      for (let peopleIndex = 0; peopleIndex < peopleValues.length; peopleIndex++) {
+        const personValue = peopleValues[peopleIndex]
+        const person = new EmbyPerson()
+        person.id = EmbyClient.readString(personValue, 'Id')
+        person.name = EmbyClient.readString(personValue, 'Name')
+        person.type = EmbyClient.readString(personValue, 'Type')
+        person.role = EmbyClient.readString(personValue, 'Role')
+        person.primaryImageTag = EmbyClient.readString(personValue, 'PrimaryImageTag')
+        if (person.name.length > 0) item.people.push(person)
+      }
       item.container = EmbyClient.readString(value, 'Container')
       item.primaryImageTag = EmbyClient.readString(value, 'PrimaryImageTag')
       item.imageItemId = item.id
@@ -614,6 +739,12 @@ export class EmbyClient {
       return url
     }
     return url + (url.indexOf('?') >= 0 ? '&' : '?') + key + '=' + encodeURIComponent(value)
+  }
+
+  private static replaceQuery(url: string, key: string, value: string): string {
+    const pattern = new RegExp('([?&])' + key + '=[^&#]*', 'i')
+    return pattern.test(url) ? url.replace(pattern, '$1' + key + '=' + encodeURIComponent(value)) :
+      EmbyClient.appendQuery(url, key, value)
   }
 
   private static safeContainer(value: string): string {

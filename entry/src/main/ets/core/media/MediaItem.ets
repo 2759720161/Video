@@ -1,4 +1,5 @@
 import type { PlaybackVariant } from '../playback/PlaybackVariant'
+import { PlaybackTrackSelection } from '../playback/PlaybackTrackSelection'
 
 export enum MediaItemType {
   VIDEO = 'video',
@@ -33,6 +34,7 @@ export class MediaItem {
   positionMs: number = 0
   /** 影视源或多线路 Provider 当前选择的稳定线路标识。 */
   variantId: string = ''
+  trackSelection: PlaybackTrackSelection | null = null
   /** 可供 UI 展示和选择的线路/清晰度列表。 */
   variants: PlaybackVariant[] = []
   year: number = 0

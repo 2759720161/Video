@@ -7,6 +7,10 @@ export class PlaybackStream {
   proxy: string = ''
   isLocalFile: boolean = false
   localFileSize: number = 0
+  /** 同类型内嵌轨道中的位置；不能把服务端 Index 传给播放器。 */
+  audioTrackOrdinal: number = -1
+  /** -2 跟随内核默认，-1 关闭，>=0 选择内嵌字幕。 */
+  subtitleTrackOrdinal: number = -2
 
   /** Unix 毫秒时间戳，0 表示不会过期。 */
   expiresAt: number = 0

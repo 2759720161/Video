@@ -20,7 +20,7 @@ class ProviderCategoryGroup {
 struct AddSourcePage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
   @StorageLink('screenWidthVp') screenWidthVp: number = 360
-  private providers: ProviderDescriptor[] = ProviderCatalog.getGalleryProviders()
+  private providers: ProviderDescriptor[] = ProviderCatalog.getAddableProviders()
 
   build() {
     HdsNavigation() {
@@ -32,7 +32,7 @@ struct AddSourcePage {
             .fontColor($r('app.color.text_primary'))
             .width('100%')
             .margin({ top: AppSpacing.SM, bottom: AppSpacing.XS })
-          Text('将家庭媒体服务器和网络存储统一到你的媒体库。')
+          Text('连接后，可在首页选择要浏览的服务。')
             .fontSize(AppTypography.BODY)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
@@ -61,6 +61,7 @@ struct AddSourcePage {
                   }, (descriptor: ProviderDescriptor) => 'add_provider_' + descriptor.type)
                 }
                 .columnsTemplate(this.providerColumns())
+                .scrollBar(BarState.Off)
                 .columnsGap(AppSpacing.SM)
                 .rowsGap(AppSpacing.SM)
                 .width('100%')
@@ -78,7 +79,7 @@ struct AddSourcePage {
       .width('100%').height('100%').scrollBar(BarState.Off)
     }
     .width('100%').height('100%').mode(NavigationMode.Stack)
-    .titleBar(buildTitleBarOptions('添加媒体源', this.hdsMaterialLevel))
+    .titleBar(buildTitleBarOptions('添加服务', this.hdsMaterialLevel))
     .titleMode(HdsNavigationTitleMode.MINI)
     .hideBackButton(false)
     .backgroundColor(Color.Transparent)
@@ -123,6 +124,6 @@ struct AddSourcePage {
   @Builder
   private EmptyProviderState(): void {
     PageEmptyState({ icon: $r('sys.symbol.plus'), title: '暂无可添加的媒体源',
-      message: '当前没有已注册的 Provider 类型' })
+      message: '暂时没有可添加的服务' })
   }
 }

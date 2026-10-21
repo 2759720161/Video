@@ -5,19 +5,22 @@ import { PlaybackSession } from '../../core/playback/PlaybackSession'
 import { PlaybackQueueItem } from '../../core/playback/PlaybackQueueItem'
 import { PlaybackMedia } from '../../core/playback/PlaybackMedia'
 import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
+import { PlaybackSubtitle } from '../../core/playback/PlaybackSubtitle'
+import { EmbyMediaSource } from './EmbyPlaybackInfo'
 import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
 import type { MediaProvider } from '../base/MediaProvider'
 import type { PlaybackResolver } from '../../core/playback/PlaybackResolver'
 import { EmbyClient } from './EmbyClient'
-import { EmbyItem, EmbyItemsPage, EmbyPlaybackContext, EmbyServerConfig } from './EmbyModels'
+import { EmbyItem, EmbyItemsPage, EmbyPerson, EmbyPlaybackContext, EmbyServerConfig } from './EmbyModels'
 import { EmbyPlaybackReporter } from './EmbyPlaybackReporter'
 import { EmbySourceConfigCodec } from './EmbySourceConfig'
 import { SecureCredentialStore } from '../../services/security/SecureCredentialStore'
 import { ProviderHealth } from '../../core/media/ProviderHealth'
 import { ArtworkResolver } from '../../services/ArtworkResolver'
+import type { EmbyHomeSource } from './EmbyHomeSource'
 
 /** Emby API 和通用媒体模型之间的适配层。 */
-export class EmbyProvider implements MediaProvider, PlaybackResolver {
+export class EmbyProvider implements MediaProvider, PlaybackResolver, EmbyHomeSource {
   private source: MediaSourceInstance
   private config: EmbyServerConfig
   private client: EmbyClient
@@ -49,6 +52,12 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
 
   async getResumeItemsRaw(): Promise<EmbyItem[]> { return this.client.getResumeItems() }
 
+  async getLatestLibraryItemsRaw(parentId: string, limit: number = 10): Promise<EmbyItem[]> {
+    return this.client.getLatestLibraryItems(parentId, limit)
+  }
+
+  async getNextUpItemsRaw(limit: number = 12): Promise<EmbyItem[]> { return this.client.getNextUpItems(limit) }
+
   async getDetailPlaybackTargetRaw(parentId: string): Promise<EmbyItem | null> {
     return this.client.getDetailPlaybackTarget(EmbyProvider.normalizeText(parentId))
   }
@@ -63,6 +72,23 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
 
   async getItemsRaw(parentId: string): Promise<EmbyItem[]> {
     return this.client.getItems(EmbyProvider.normalizeText(parentId))
+  }
+
+  async getSimilarItemsRaw(itemId: string, limit: number = 12): Promise<EmbyItem[]> {
+    return this.client.getSimilarItems(EmbyProvider.normalizeText(itemId), limit)
+  }
+
+  async getBrowsePageRaw(parentId: string, startIndex: number, limit: number,
+    recursive: boolean, itemTypes: string, sortBy: string, sortOrder: string): Promise<EmbyItemsPage> {
+    return this.client.getItemsPage(parentId, startIndex, limit, recursive, itemTypes, sortBy, sortOrder)
+  }
+
+  async getResumePageRaw(startIndex: number, limit: number): Promise<EmbyItemsPage> {
+    return this.client.getResumeItemsPage(startIndex, limit)
+  }
+
+  async getNextUpPageRaw(startIndex: number, limit: number): Promise<EmbyItemsPage> {
+    return this.client.getNextUpItemsPage(startIndex, limit)
   }
 
   async getSeriesSeasonsRaw(seriesId: string): Promise<EmbyItem[]> {
@@ -109,6 +135,10 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
 
   thumbnailUrlFor(item: EmbyItem, maxWidth: number = 800): string {
     return this.client.thumbnailImageUrl(item, maxWidth)
+  }
+
+  personImageUrlFor(person: EmbyPerson, maxWidth: number = 240): string {
+    return this.client.personImageUrl(person, maxWidth)
   }
 
   hasCapability(capability: ProviderCapability): boolean {
@@ -182,6 +212,10 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     return await this.client.getPlaybackVariants(item)
   }
 
+  async getPlaybackSources(item: EmbyItem): Promise<EmbyMediaSource[]> {
+    return await this.client.getPlaybackSources(item)
+  }
+
   async resolvePlayback(item: PlaybackQueueItem): Promise<PlaybackSession> {
     const mediaId = EmbyProvider.normalizeText(item.mediaId)
     if (EmbyProvider.normalizeText(item.sourceId) !== this.source.id || mediaId.length === 0) {
@@ -189,7 +223,7 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     }
     const embyItem = await this.client.getItem(mediaId)
     if (embyItem === null || embyItem.isFolder) throw new Error('Emby 媒体不存在或不可播放')
-    const route = await this.client.getPlaybackRoute(embyItem, item.variantId)
+    const route = await this.client.getPlaybackRoute(embyItem, item.variantId, item.trackSelection)
     const session = new PlaybackSession()
     session.media.sourceId = this.source.id
     session.media.mediaId = embyItem.id
@@ -200,6 +234,15 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
     session.media.durationMs = embyItem.durationMs()
     session.stream.url = route.url
     session.stream.headers = route.requiredHttpHeaders
+    session.stream.audioTrackOrdinal = route.audioTrackOrdinal
+    session.stream.subtitleTrackOrdinal = route.subtitleTrackOrdinal
+    if (route.subtitleUrl.length > 0) {
+      const subtitle = new PlaybackSubtitle()
+      subtitle.url = route.subtitleUrl
+      subtitle.displayName = route.subtitleName
+      subtitle.headers = route.requiredHttpHeaders
+      session.subtitles = [subtitle]
+    }
     // Emby UserData is authoritative. The local unified-history cache is only
     // used for displaying the home page and must not override a newer server
     // resume position when the item is opened again.
@@ -252,6 +295,7 @@ export class EmbyProvider implements MediaProvider, PlaybackResolver {
           }
           queueItem.startFromBeginning = previous.startFromBeginning
           queueItem.variantId = previous.variantId
+          queueItem.trackSelection = previous.trackSelection
           break
         }
       }

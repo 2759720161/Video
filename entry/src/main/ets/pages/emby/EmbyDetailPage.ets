@@ -1,33 +1,55 @@
-import { promptAction } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
-import { HdsNavigation, HdsNavigationTitleMode, IconStyleMode } from '@kit.UIDesignKit'
-import { EmbyItem } from '../../providers/emby/EmbyModels'
+import { BusinessError } from '@kit.BasicServicesKit'
+import { Logger } from '../../utils/Logger'
+import { uiMaterial } from '@kit.ArkUI'
+import { deviceInfo } from '@kit.BasicServicesKit'
+import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit'
+import { EmbyItem, EmbyPerson } from '../../providers/emby/EmbyModels'
 import { EmbyProvider } from '../../providers/emby/EmbyProvider'
 import { EmbyPlaybackLauncher } from '../../providers/emby/EmbyPlaybackLauncher'
 import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
-import { buildTitleBarOptions, buildImmersiveTitleBarStyle, getDetailContentMaxWidth, isWideDetailLayout,
-  HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { buildMediaDetailTitleBarOptions, getDetailContentMaxWidth, getTopSpacerHeight, isWideDetailLayout,
+  HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL, IMMERSIVE_STYLE_DEFAULT,
+  PREFS_KEY_IMMERSIVE_MATERIAL_STYLE } from '../../utils/HdsPageStyle'
+import { buildDetailToastOptions,
+  DetailSelectMaterialModifier, DetailToggleButtonMaterialModifier } from '../../utils/DetailMaterial'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { AppTypography } from '../../ui/theme/AppTypography'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
 import { MediaPosterCard } from '../../components/media/MediaPosterCard'
-import { EpisodeRow } from '../../components/media/EpisodeRow'
 import { EmbyDetailPresentation } from '../../providers/emby/EmbyDetailPresentation'
+import { buildEmbyDetailRouteParams } from '../../providers/emby/EmbyDetailRoute'
 import { AppRadius } from '../../ui/theme/AppRadius'
 import { AppSurface } from '../../ui/theme/AppSurface'
 import { ResponsiveSizeClassResolver } from '../../ui/theme/ResponsiveSizeClass'
 import { ImmersiveDetailStage } from '../../components/media/ImmersiveDetailStage'
+import { DetailTrackOption } from '../../components/media/DetailTrackSelect'
+import { EmbyMediaSource, EmbyMediaTrack } from '../../providers/emby/EmbyPlaybackInfo'
+import { EmbyPlaybackPolicy } from '../../providers/emby/EmbyPlaybackPolicy'
+import { PlaybackTrackSelection } from '../../core/playback/PlaybackTrackSelection'
+
+const playbackInfoLogger: Logger = new Logger('EmbyDetailTracks')
+
+enum EmbyDetailSheetType {
+  PLAYBACK_VARIANTS,
+  OVERVIEW,
+  INFORMATION
+}
 
 @Entry
 @Component
 struct EmbyDetailPage {
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
+  @StorageLink(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE) materialThickness: string = IMMERSIVE_STYLE_DEFAULT
   @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @State private sourceId: string = ''
   @State private itemId: string = ''
+  @State private artworkTransitionId: string = ''
+  @State private transitionArtworkUrl: string = ''
+  @State private transitionArtworkFailed: boolean = false
   @State private initialSeasonId: string = ''
   @State private initialEpisodeId: string = ''
   @State private initialEpisodeIndex: number = 0
@@ -38,28 +60,36 @@ struct EmbyDetailPage {
   @State private seasonItems: EmbyItem[] = []
   @State private episodeItems: EmbyItem[] = []
   @State private collectionItems: EmbyItem[] = []
+  @State private similarItems: EmbyItem[] = []
   @State private selectedSeasonId: string = ''
   @State private playbackVariants: PlaybackVariant[] = []
   @State private selectedVariantId: string = 'auto'
+  @State private playbackSources: EmbyMediaSource[] = []
+  @State private audioOptions: DetailTrackOption[] = []
+  @State private subtitleOptions: DetailTrackOption[] = []
+  @State private selectedAudioId: number = -1
+  @State private selectedSubtitleId: number = -1
+  @State private tracksLoading: boolean = false
+  private trackItemId: string = ''
+  private trackSourceId: string = ''
+  private autoSourceIndex: number = 0
   @State private ambientArtworkUrl: string = ''
-  @State private detailScrollOffset: number = 0
   @State private totalEpisodeCount: number = 0
   @State private currentSeasonEpisodeCount: number = 0
   @State private episodeRangeStart: number = 0
   @State private showDetailSheet: boolean = false
-  @State private sheetKind: string = 'season'
-  @State private aboutSelected: boolean = false
   @State private overviewExpanded: boolean = false
-  @State private hideSpoilers: boolean = false
+  @State private detailSheetType: EmbyDetailSheetType = EmbyDetailSheetType.PLAYBACK_VARIANTS
   @State private episodesLoading: boolean = false
   @State private episodesError: string = ''
   @State private loadingMore: boolean = false
   @State private playbackTarget: EmbyItem | null = null
   @State private targetLoading: boolean = false
-  @State private heroHeight: number = 480
+  @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   private provider: EmbyProvider | null = null
   private seasonLoadGeneration: number = 0
+  private episodeNextStart: number = 0
   private detailLoadGeneration: number = 0
   private scroller: Scroller = new Scroller()
   private heroScroller: Scroller = new Scroller()
@@ -74,6 +104,12 @@ struct EmbyDetailPage {
     if (params !== undefined) {
       if (typeof params['sourceId'] === 'string') this.sourceId = (params['sourceId'] as string).trim()
       if (typeof params['itemId'] === 'string') this.itemId = (params['itemId'] as string).trim()
+      if (typeof params['artworkTransitionId'] === 'string') {
+        this.artworkTransitionId = params['artworkTransitionId'] as string
+      }
+      if (typeof params['transitionArtworkUrl'] === 'string') {
+        this.transitionArtworkUrl = params['transitionArtworkUrl'] as string
+      }
       if (typeof params['initialSeasonId'] === 'string') {
         this.initialSeasonId = (params['initialSeasonId'] as string).trim()
       }
@@ -119,13 +155,10 @@ struct EmbyDetailPage {
   }
 
   build() {
+    Stack() {
     HdsNavigation() {
       if (this.loading) {
-        Column() {
-          PageLoadingState({ title: '正在读取媒体详情', minHeight: 300 })
-        }
-        .width('100%').height('100%')
-        .justifyContent(FlexAlign.Center)
+        this.LoadingContent()
       } else if (this.errorText.length > 0 || this.item === null) {
         Column() {
           PageErrorState({ title: '媒体详情不可用', message: this.errorText.length > 0 ? this.errorText : '媒体不存在',
@@ -137,195 +170,346 @@ struct EmbyDetailPage {
         this.DetailContent(this.item!)
       }
     }.width('100%').height('100%').mode(NavigationMode.Stack)
-      .titleBar(buildTitleBarOptions(this.item === null ? '媒体详情' : this.item!.name, this.hdsMaterialLevel))
+      .titleBar(buildMediaDetailTitleBarOptions(this.item === null ? '媒体详情' : this.item!.name,
+        this.hdsMaterialLevel))
       .titleMode(HdsNavigationTitleMode.MINI).hideBackButton(false).backgroundColor(Color.Transparent)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
       .bindToScrollable([this.scroller, this.heroScroller])
-      .bindSheet($$this.showDetailSheet, this.SelectionSheet(), {
-        detents: [SheetSize.MEDIUM, SheetSize.LARGE],
-        preferType: isWideDetailLayout(this.screenWidthVp) ? SheetType.CENTER : SheetType.BOTTOM,
-        width: isWideDetailLayout(this.screenWidthVp) ? 560 : '100%',
-        showClose: false, dragBar: true,
-        backgroundColor: AppSurface.color(AppSurface.SURFACE),
-        onDisappear: () => { this.showDetailSheet = false }
-      })
+    }.width('100%').height('100%')
+      .bindSheet($$this.showDetailSheet, this.DetailSheet(), this.buildReferenceSheetOptions())
+  }
+
+  private buildReferenceSheetOptions(): SheetOptions {
+    const options: SheetOptions = {
+      height: 410,
+      maskColor: '#66000000',
+      showClose: false,
+      dragBar: false,
+      onDisappear: () => { this.showDetailSheet = false }
+    }
+    if (deviceInfo.sdkApiVersion >= 26) {
+      options.backgroundColor = Color.Transparent
+      options.systemMaterial = new uiMaterial.ImmersiveMaterial({ style: uiMaterial.ImmersiveStyle.THICK })
+    } else {
+      options.backgroundColor = $r('app.color.card_background')
+    }
+    return options
   }
 
   @Builder
   private DetailContent(item: EmbyItem): void {
     Stack({ alignContent: Alignment.Bottom }) {
+      this.DetailAtmosphere()
       if (isWideDetailLayout(this.screenWidthVp)) {
         Row({ space: AppSpacing.XL }) {
           Scroll(this.heroScroller) {
             Column({ space: AppSpacing.MD }) {
+              Blank().width('100%').height(getTopSpacerHeight(this.topSafeHeight))
               this.Hero(item, true)
-              this.OverviewSection(item)
             }.width('100%').alignItems(HorizontalAlign.Start)
               .padding({ bottom: 24 + this.bottomSafeHeight })
           }.width('40%').height('100%').scrollBar(BarState.Off)
           Scroll(this.scroller) {
-            Column() { this.DetailSections(item) }.width('100%')
+            Column() {
+              Blank().width('100%').height(getTopSpacerHeight(this.topSafeHeight))
+              this.DetailSections(item)
+            }.width('100%')
               .padding({ bottom: 24 + this.bottomSafeHeight })
-          }.layoutWeight(1).height('100%').scrollBar(BarState.Auto)
+          }.layoutWeight(1).height('100%').scrollBar(BarState.Off)
         }.width('100%').height('100%').alignItems(VerticalAlign.Top)
           .constraintSize({ maxWidth: getDetailContentMaxWidth(this.screenWidthVp) })
           .padding(ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp))
       } else {
         Scroll(this.scroller) {
           Column({ space: AppSpacing.LG }) {
+            Blank().width('100%').height(getTopSpacerHeight(this.topSafeHeight))
             this.Hero(item, false)
             Column({ space: AppSpacing.LG }) {
               this.DetailSections(item)
             }.width('100%').padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
               right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp) })
-          }.width('100%').padding({ bottom: 112 + this.bottomSafeHeight })
+          }.width('100%').padding({ bottom: 24 + this.bottomSafeHeight })
         }.width('100%').height('100%').scrollBar(BarState.Off)
-          .onDidScroll(() => {
-            this.detailScrollOffset = Math.max(0, this.scroller.currentOffset().yOffset)
-          })
       }
-      if (!isWideDetailLayout(this.screenWidthVp) && this.detailScrollOffset > this.heroHeight &&
-        this.canPlay(item)) this.PlaybackDock(item)
     }.width('100%').height('100%').backgroundColor($r('app.color.page_background'))
+  }
+
+  /** Keeps a destination poster in the tree from the first frame of a shared transition. */
+  @Builder
+  private LoadingContent(): void {
+    Stack({ alignContent: Alignment.Bottom }) {
+      this.DetailAtmosphere()
+      if (isWideDetailLayout(this.screenWidthVp)) {
+        Row({ space: AppSpacing.XL }) {
+          Scroll(this.heroScroller) {
+            Column({ space: AppSpacing.MD }) {
+              Blank().width('100%').height(getTopSpacerHeight(this.topSafeHeight))
+              this.LoadingHero(true)
+            }.width('100%').alignItems(HorizontalAlign.Start)
+              .padding({ bottom: 24 + this.bottomSafeHeight })
+          }.width('40%').height('100%').scrollBar(BarState.Off)
+          Scroll(this.scroller) {
+            Column() {
+              Blank().width('100%').height(getTopSpacerHeight(this.topSafeHeight))
+              this.LoadingSections()
+            }.width('100%').padding({ bottom: 24 + this.bottomSafeHeight })
+          }.layoutWeight(1).height('100%').scrollBar(BarState.Off)
+        }.width('100%').height('100%').alignItems(VerticalAlign.Top)
+          .constraintSize({ maxWidth: getDetailContentMaxWidth(this.screenWidthVp) })
+          .padding(ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp))
+      } else {
+        Scroll(this.scroller) {
+          Column({ space: AppSpacing.LG }) {
+            Blank().width('100%').height(getTopSpacerHeight(this.topSafeHeight))
+            this.LoadingHero(false)
+            Column({ space: AppSpacing.LG }) {
+              this.LoadingSections()
+            }.width('100%').padding({ left: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+              right: ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp) })
+          }.width('100%').padding({ bottom: 24 + this.bottomSafeHeight })
+        }.width('100%').height('100%').scrollBar(BarState.Off)
+      }
+    }.width('100%').height('100%').backgroundColor($r('app.color.page_background'))
+  }
+
+  @Builder
+  private LoadingHero(wide: boolean): void {
+    Column({ space: AppSpacing.MD }) {
+      Row({ space: AppSpacing.MD }) {
+        this.LoadingPoster(wide)
+        Column({ space: AppSpacing.SM }) {
+          Column().width('82%').height(30).borderRadius(AppRadius.SMALL_BUTTON)
+            .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+          Column().width('54%').height(14).borderRadius(AppRadius.SMALL_BUTTON)
+            .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+          Column().width('100%').height(40).borderRadius(20)
+            .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+          Column().width('80%').height(40).borderRadius(20)
+            .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      }.width('100%').alignItems(VerticalAlign.Top)
+      Column({ space: AppSpacing.SM }) {
+        Column().width('100%').height(48).borderRadius(AppRadius.BUTTON)
+          .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+        Column().width('58%').height(13).borderRadius(AppRadius.SMALL_BUTTON)
+          .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+      }.width('100%').alignItems(HorizontalAlign.Center)
+    }.width('100%').alignItems(HorizontalAlign.Start)
+      .padding({ left: wide ? 0 : ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+        right: wide ? 0 : ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
+        top: AppSpacing.LG, bottom: AppSpacing.SM })
+  }
+
+  @Builder
+  private LoadingPoster(wide: boolean): void {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.transitionArtworkUrl.length > 0 && !this.transitionArtworkFailed) {
+        Image(this.transitionArtworkUrl).width(this.loadingPosterWidth(wide)).height(this.loadingPosterHeight(wide))
+          .objectFit(ImageFit.Cover).accessibilityLevel('no')
+          .borderRadius(AppRadius.MEDIA_POSTER).clip(true)
+          .sharedTransition(this.artworkTransitionId, { duration: 360, curve: Curve.FastOutSlowIn })
+          .onError(() => { this.transitionArtworkFailed = true })
+      } else {
+        Column().width(this.loadingPosterWidth(wide)).height(this.loadingPosterHeight(wide))
+          .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+      }
+    }.width(this.loadingPosterWidth(wide)).height(this.loadingPosterHeight(wide))
+      .borderRadius(AppRadius.MEDIA_POSTER).clip(true)
+      .border({ width: 0.5, color: AppSurface.borderColor() })
+      .shadow({ radius: 24, color: $r('app.color.shadow_surface'), offsetY: 9 })
+  }
+
+  @Builder
+  private LoadingSections(): void {
+    Column({ space: AppSpacing.SECTION_COMPACT }) {
+      this.LoadingTextSection(3, '100%')
+      this.LoadingTextSection(4, '88%')
+      this.LoadingTextSection(2, '68%')
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private LoadingTextSection(lineCount: number, lastLineWidth: string): void {
+    Column({ space: AppSpacing.SM }) {
+      Column().width('36%').height(20).borderRadius(AppRadius.SMALL_BUTTON)
+        .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+      Column({ space: AppSpacing.XS }) {
+        ForEach(Array.from({ length: lineCount }), (_value: number, index: number) => {
+          Column().width(index === lineCount - 1 ? lastLineWidth : '100%').height(14)
+            .borderRadius(AppRadius.SMALL_BUTTON)
+            .backgroundColor(AppSurface.color(AppSurface.SURFACE_SECONDARY))
+        }, (_value: number, index: number) => 'detail_skeleton_' + lineCount + '_' + index)
+      }.width('100%').padding(AppSpacing.MD).alignItems(HorizontalAlign.Start)
+        .borderRadius(AppRadius.SURFACE).backgroundColor(AppSurface.color(AppSurface.SURFACE))
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  private loadingPosterWidth(wide: boolean): number {
+    return wide ? 144 : 112
+  }
+
+  private loadingPosterHeight(wide: boolean): number {
+    return wide ? 216 : 168
+  }
+
+  @Builder
+  private DetailAtmosphere(): void {
+    Stack() {
+      if (this.ambientArtworkUrl.length > 0) {
+        Image(this.ambientArtworkUrl)
+          .width('100%').height('100%').objectFit(ImageFit.Cover)
+           .blur(92).opacity(0.76).scale({ x: 1.24, y: 1.24 })
+          .accessibilityLevel('no')
+      }
+      // 约束海报背景的明暗范围，让深浅主题的正文和次要文字都保持可读。
+      Column().width('100%').height('100%')
+        .backgroundColor($r('app.color.detail_atmosphere_wash'))
+        .accessibilityLevel('no')
+    }.width('100%').height('100%').hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
   private Hero(item: EmbyItem, wide: boolean): void {
     Column() {
       ImmersiveDetailStage({
-        backdropUrl: this.ambientArtworkUrl, posterUrl: this.imageUrl(item),
-        title: item.name, meta: this.metaText(item), artworkMode: this.ambientArtworkMode(item),
+        posterUrl: this.imageUrl(item), title: item.name, meta: this.metaText(item),
         actionText: this.primaryActionText(item), actionDescription: this.actionDescription(item),
-        actionEnabled: this.canPlay(item), busy: this.playing, progress: this.actionProgress(item),
+        actionEnabled: this.canPlay(item), busy: this.playing,
         variantLabel: this.playbackVariants.length > 1 ? this.selectedVariantLabel() : '',
         wide: wide, contentPadding: wide ? 0 : ResponsiveSizeClassResolver.pagePadding(this.screenWidthVp),
-        sharedTransitionId: this.artworkSharedTransitionId(item),
+        sharedTransitionId: this.artworkTransitionId,
+        audioOptions: this.audioOptions, subtitleOptions: this.subtitleOptions,
+        selectedAudioId: this.selectedAudioId, selectedSubtitleId: this.selectedSubtitleId,
+        tracksLoading: this.tracksLoading || this.targetLoading,
+        onAudioSelect: (id: number) => { this.selectedAudioId = id },
+        onSubtitleSelect: (id: number) => { this.selectedSubtitleId = id },
         onPrimaryAction: () => this.handlePrimaryAction(item),
         onVariantAction: () => this.openVariantMenu()
       })
-    }.width('100%').onAreaChange((_oldArea: Area, newArea: Area) => {
-      this.heroHeight = Number(newArea.height)
-    })
-  }
-
-  @Builder
-  private PlaybackDock(item: EmbyItem): void {
-    Row({ space: AppSpacing.MD }) {
-      Column({ space: 4 }) {
-        Text(item.name).fontSize(AppTypography.BODY_LARGE).fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary')).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(this.actionDescription(item)).fontSize(AppTypography.META)
-          .fontColor($r('app.color.text_secondary')).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      Button(this.playing ? '准备中' : this.primaryActionText(item), { type: ButtonType.Capsule })
-        .fontSize(AppTypography.BODY).constraintSize({ minHeight: 48, maxWidth: 144 })
-        .backgroundColor($r('app.color.accent_blue')).fontColor($r('app.color.text_on_primary'))
-        .enabled(!this.playing).onClick(() => this.handlePrimaryAction(item))
-    }.width('100%').padding(AppSpacing.MD).borderRadius(AppRadius.SURFACE)
-      .backgroundColor(AppSurface.color(AppSurface.SURFACE))
-      .margin({ bottom: this.bottomSafeHeight + AppSpacing.SM })
-      .constraintSize({ maxWidth: Math.max(280, this.screenWidthVp - 32) })
+    }.width('100%')
   }
 
   @Builder
   private OverviewSection(item: EmbyItem): void {
-    if (item.overview.length > 0) {
-      Column({ space: AppSpacing.SM }) {
-        MediaSectionHeader({ title: '简介' })
-        Text(item.overview).fontSize(AppTypography.BODY_LARGE)
-          .fontColor($r('app.color.text_primary')).lineHeight(26)
-          .maxLines(this.overviewExpanded ? 1000 : 3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
-        Button(this.overviewExpanded ? '收起简介' : '展开简介', { type: ButtonType.Normal })
-          .fontSize(AppTypography.BODY).fontColor($r('app.color.accent_blue'))
-          .backgroundColor(Color.Transparent).constraintSize({ minHeight: 44 })
-          .onClick(() => { this.overviewExpanded = !this.overviewExpanded })
-      }.width('100%').padding(AppSpacing.MD).alignItems(HorizontalAlign.Start)
-        .borderRadius(AppRadius.SURFACE).backgroundColor(AppSurface.color(AppSurface.SURFACE))
-    }
+    Column({ space: AppSpacing.SM }) {
+      Text('关于作品').fontSize(AppTypography.SECTION_TITLE).fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+      if (item.overview.length > 0) {
+        Toggle({ type: ToggleType.Button, isOn: this.overviewExpanded }) {
+          Text(item.overview).fontSize(AppTypography.BODY_LARGE)
+            .fontColor($r('app.color.text_primary')).lineHeight(26)
+            .maxLines(this.overviewExpanded ? Infinity : 3)
+            .textOverflow({ overflow: this.overviewExpanded ? TextOverflow.None : TextOverflow.Ellipsis })
+            .width('100%')
+        }.width('100%').constraintSize({ minHeight: 44 }).padding(18).borderRadius(22)
+          .attributeModifier(new DetailToggleButtonMaterialModifier(this.materialThickness,
+            this.overviewExpanded, 'overview', AppSurface.color(AppSurface.SURFACE_INTERACTIVE),
+            AppSurface.color(AppSurface.SURFACE_SELECTED)))
+          .accessibilityText(this.overviewExpanded ? '作品简介，已展开，点击收起' : '作品简介，已收起，点击展开')
+          .onChange((isOn: boolean) => { this.overviewExpanded = isOn })
+      } else {
+        Text('暂无作品简介').fontSize(AppTypography.BODY)
+          .fontColor($r('app.color.detail_text_secondary')).padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start)
   }
 
   @Builder
   private DetailSections(item: EmbyItem): void {
-    Column({ space: AppSpacing.MD }) {
+    Column({ space: AppSpacing.SECTION_COMPACT }) {
+      this.OverviewSection(item)
       if (this.isEpisodeContainer(item)) {
-        Row({ space: AppSpacing.LG }) {
-          this.SectionTab('剧集', false)
-          this.SectionTab('关于作品', true)
-        }.width('100%')
-        if (!this.aboutSelected) {
-          this.EpisodeSection()
-        } else {
-          if (!isWideDetailLayout(this.screenWidthVp)) this.OverviewSection(item)
-          this.DetailInfoSection(item)
-          Row() {
-            Text('隐藏未看剧集内容').fontSize(AppTypography.BODY_LARGE)
-              .fontColor($r('app.color.text_primary')).layoutWeight(1)
-            Toggle({ type: ToggleType.Switch, isOn: this.hideSpoilers })
-              .onChange((enabled: boolean) => { this.hideSpoilers = enabled })
-              .accessibilityText('隐藏未看剧集内容')
-          }.width('100%').padding(AppSpacing.MD).borderRadius(AppRadius.SURFACE)
-            .backgroundColor(AppSurface.color(AppSurface.SURFACE))
-        }
+        this.EpisodeSection()
+        if (this.seasonItems.length > 0) this.SeasonSection()
+        if (item.people.length > 0) this.PeopleSection(item)
+        if (this.similarItems.length > 0) this.SimilarSection()
+        this.DetailInfoSection(item)
       } else {
-        if (!isWideDetailLayout(this.screenWidthVp)) this.OverviewSection(item)
         if (this.collectionItems.length > 0) this.CollectionSection()
+        if (item.people.length > 0) this.PeopleSection(item)
+        if (this.similarItems.length > 0) this.SimilarSection()
         this.DetailInfoSection(item)
       }
     }.width('100%').alignItems(HorizontalAlign.Start)
   }
 
   @Builder
-  private SectionTab(label: string, about: boolean): void {
-    Button({ type: ButtonType.Normal }) {
-      Text(label).fontSize(AppTypography.FEATURE_TITLE)
-        .fontWeight(this.aboutSelected === about ? FontWeight.Bold : FontWeight.Regular)
-        .fontColor(this.aboutSelected === about ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
-        .padding({ top: 12, bottom: 12 })
-    }.backgroundColor(Color.Transparent)
-      .border({ width: { bottom: this.aboutSelected === about ? 3 : 0 }, color: $r('app.color.accent_blue') })
-      .accessibilityText(label + (this.aboutSelected === about ? '，已选中' : ''))
-      .onClick(() => { this.aboutSelected = about })
+  private DetailInfoSection(item: EmbyItem): void {
+    Column({ space: AppSpacing.MD }) {
+      Toggle({ type: ToggleType.Button, isOn: true }) {
+        Column({ space: AppSpacing.MD }) {
+          Text('作品信息').fontSize(AppTypography.SECTION_TITLE).fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary')).width('100%')
+          this.DetailInformationContent(item)
+        }.width('100%').alignItems(HorizontalAlign.Start)
+      }.width('100%').constraintSize({ minHeight: 44 }).padding(18).borderRadius(22)
+        .attributeModifier(new DetailToggleButtonMaterialModifier(this.materialThickness,
+          true, 'information', AppSurface.color(AppSurface.SURFACE_INTERACTIVE),
+          AppSurface.color(AppSurface.SURFACE_SELECTED)))
+        .accessibilityText('作品信息')
+        .hitTestBehavior(HitTestMode.None)
+        .focusable(false)
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  private detailInfoSummary(item: EmbyItem): string {
+    const parts: string[] = [EmbyItem.typeLabel(item.type)]
+    if (item.productionYear > 0) parts.push(String(item.productionYear))
+    if (item.container.length > 0) parts.push(item.container.toUpperCase())
+    return parts.join(' · ')
   }
 
   @Builder
-  private DetailInfoSection(item: EmbyItem): void {
-    Column({ space: 6 }) {
-      MediaSectionHeader({ title: '更多信息' })
+  private DetailInformationContent(item: EmbyItem): void {
+    Column({ space: AppSpacing.LG }) {
       Column() {
-        this.DetailInfoRow('类型', EmbyItem.typeLabel(item.type),
-          item.productionYear > 0 || item.type === 'Series' || item.type === 'Season' || item.durationMs() > 0 || item.container.length > 0)
+        this.DetailInfoGroupHeading('基本信息')
+        this.DetailInfoRow('媒体类型', EmbyItem.typeLabel(item.type))
         if (item.productionYear > 0) {
-          this.DetailInfoRow('年份', String(item.productionYear),
-            item.type === 'Series' || item.type === 'Season' || item.durationMs() > 0 || item.container.length > 0)
+          this.DetailInfoRow('年份', String(item.productionYear))
         }
         if (item.type === 'Series') {
-          if (this.seriesSeasonCount(item) > 0) this.DetailInfoRow('季数', String(this.seriesSeasonCount(item)) + ' 季', this.seriesEpisodeCount(item) > 0)
-          if (this.seriesEpisodeCount(item) > 0) this.DetailInfoRow('总集数', String(this.seriesEpisodeCount(item)) + ' 集', false)
+          if (this.seriesSeasonCount(item) > 0) this.DetailInfoRow('季数', String(this.seriesSeasonCount(item)) + ' 季')
+          if (this.seriesEpisodeCount(item) > 0) this.DetailInfoRow('总集数', String(this.seriesEpisodeCount(item)) + ' 集')
         } else if (item.type === 'Season' && this.currentSeasonEpisodeCount > 0) {
-          this.DetailInfoRow('集数', String(this.currentSeasonEpisodeCount) + ' 集', item.container.length > 0 || item.durationMs() > 0)
+          this.DetailInfoRow('集数', String(this.currentSeasonEpisodeCount) + ' 集')
         }
         if (item.durationMs() > 0) {
-          this.DetailInfoRow('时长', this.formatDuration(item.durationMs()), item.container.length > 0)
+          this.DetailInfoRow('时长', this.formatDuration(item.durationMs()))
         }
-        if (item.container.length > 0) this.DetailInfoRow('格式', item.container.toUpperCase(), false)
+        if (item.container.length > 0) this.DetailInfoRow('格式', item.container.toUpperCase())
+      }.width('100%').alignItems(HorizontalAlign.Start)
+      if (item.communityRating > 0 || item.genres.length > 0 || item.officialRating.length > 0) {
+        Column() {
+          this.DetailInfoGroupHeading('评分与分类')
+          if (item.communityRating > 0) this.DetailInfoRow('评分', item.communityRating.toFixed(1))
+          if (item.genres.length > 0) this.DetailInfoRow('题材', item.genres.join(' · '))
+          if (item.officialRating.length > 0) this.DetailInfoRow('分级', item.officialRating)
+        }.width('100%').alignItems(HorizontalAlign.Start)
       }
-      .width('100%')
-      .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM, left: AppSpacing.MD, right: AppSpacing.MD })
-      .borderRadius(AppRadius.SURFACE)
-      .backgroundColor(AppSurface.color(AppSurface.SURFACE))
-    }
-    .width('100%').alignItems(HorizontalAlign.Start)
+      if (item.studios.length > 0 || item.premiereDate.length > 0) {
+        Column() {
+          this.DetailInfoGroupHeading('制作与发行')
+          if (item.studios.length > 0) this.DetailInfoRow('制作', item.studios.join(' · '))
+          if (item.premiereDate.length > 0) this.DetailInfoRow('首播', this.displayDate(item.premiereDate))
+        }.width('100%').alignItems(HorizontalAlign.Start)
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start)
   }
 
   @Builder
-  private DetailInfoRow(label: string, value: string, showDivider: boolean = true): void {
-    Row() {
-      Text(label).fontSize(13).fontColor($r('app.color.text_secondary')).width(64)
-      Text(value).fontSize(13).fontColor($r('app.color.text_primary')).layoutWeight(1)
-        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .width('100%').padding({ top: 7, bottom: 7 })
-    .border({ width: { bottom: showDivider ? 0.5 : 0 }, color: $r('app.color.divider_color') })
+  private DetailInfoGroupHeading(title: string): void {
+    Text(title).fontSize(AppTypography.BODY_LARGE).fontWeight(FontWeight.Medium)
+      .fontColor($r('sys.color.font_primary')).padding({ bottom: AppSpacing.SM })
+  }
+
+  @Builder
+  private DetailInfoRow(label: string, value: string): void {
+    Row({ space: AppSpacing.SM }) {
+      Text(label).fontSize(AppTypography.BODY).fontColor($r('sys.color.font_secondary')).width(76)
+      Text(value).fontSize(AppTypography.BODY).fontColor($r('sys.color.font_primary')).layoutWeight(1)
+        .lineHeight(24)
+    }.width('100%').alignItems(VerticalAlign.Top).padding({ top: 7, bottom: 7 })
   }
 
 
@@ -335,15 +519,16 @@ struct EmbyDetailPage {
     const generation = ++this.detailLoadGeneration
     this.targetGeneration++
     this.loading = true
+    this.transitionArtworkFailed = false
     this.errorText = ''
     this.item = null
     this.ambientArtworkUrl = ''
-    this.detailScrollOffset = 0
     this.playbackVariants = []
     this.selectedVariantId = 'auto'
     this.seasonItems = []
     this.episodeItems = []
     this.collectionItems = []
+    this.similarItems = []
     this.selectedSeasonId = ''
     this.totalEpisodeCount = 0
     this.currentSeasonEpisodeCount = 0
@@ -353,8 +538,7 @@ struct EmbyDetailPage {
     this.loadingMore = false
     this.playbackTarget = null
     this.targetLoading = false
-    this.overviewExpanded = false
-    this.aboutSelected = false
+    this.detailSheetType = EmbyDetailSheetType.PLAYBACK_VARIANTS
     this.userSelectedSeason = false
     this.showDetailSheet = false
     try {
@@ -370,6 +554,7 @@ struct EmbyDetailPage {
       this.ambientArtworkUrl = this.ambientRenderArtworkUrl(loadedItem)
       // Metadata paints independently of season, episode and playback-info requests.
       this.loading = false
+      void this.loadSimilarItems(provider, loadedItem, generation)
       if (this.isEpisodeContainer(loadedItem)) {
         this.episodesLoading = true
         void this.loadContainer(loadedItem, generation)
@@ -382,7 +567,7 @@ struct EmbyDetailPage {
               entry.type !== 'Folder' && entry.type !== 'CollectionFolder')
           }
         } catch (_) {
-          if (generation === this.detailLoadGeneration) promptAction.showToast({ message: '合集内容读取失败' })
+          if (generation === this.detailLoadGeneration) this.showDetailToast('合集内容读取失败')
         }
       } else if (!loadedItem.isFolder) {
         void this.loadPlaybackVariants(provider, loadedItem, generation)
@@ -393,6 +578,18 @@ struct EmbyDetailPage {
       }
     } finally {
       if (generation === this.detailLoadGeneration) this.loading = false
+    }
+  }
+
+  private async loadSimilarItems(provider: EmbyProvider, loadedItem: EmbyItem,
+    generation: number): Promise<void> {
+    try {
+      const items = await provider.getSimilarItemsRaw(loadedItem.id, 12)
+      if (generation !== this.detailLoadGeneration || this.item === null || this.item.id !== loadedItem.id) return
+      this.similarItems = items.filter((entry: EmbyItem) => entry.id !== loadedItem.id &&
+        entry.type !== 'Folder' && entry.type !== 'CollectionFolder')
+    } catch (_) {
+      if (generation === this.detailLoadGeneration) this.similarItems = []
     }
   }
 
@@ -466,6 +663,7 @@ struct EmbyDetailPage {
     if (!append) {
       this.episodeItems = []
       this.episodeRangeStart = start
+      this.episodeNextStart = start
     }
     try {
       let page = await this.provider.getSeasonEpisodesPageRaw(seriesId, seasonId, start, this.EPISODE_PAGE_SIZE)
@@ -482,6 +680,8 @@ struct EmbyDetailPage {
       } else {
         this.episodeItems = items
       }
+      // 按服务器返回的条目推进分页，避免去重后重复请求同一页。
+      this.episodeNextStart = (append ? start : this.episodeRangeStart) + page.items.length
       this.currentSeasonEpisodeCount = items.length === 0 && append ? start :
         Math.max(page.totalRecordCount, this.episodeRangeStart + this.episodeItems.length)
       this.sortByIndex(this.episodeItems)
@@ -502,8 +702,9 @@ struct EmbyDetailPage {
   }
 
   private async loadMoreEpisodes(): Promise<void> {
-    if (this.episodesLoading || this.loadingMore) return
-    await this.loadEpisodes(this.episodeRangeStart + this.episodeItems.length, true)
+    if (this.episodesLoading || this.loadingMore || this.episodeItems.length === 0 ||
+      this.episodeNextStart >= this.currentSeasonEpisodeCount) return
+    await this.loadEpisodes(this.episodeNextStart, true)
   }
 
   private async refreshVisibleEpisodes(): Promise<void> {
@@ -544,22 +745,122 @@ struct EmbyDetailPage {
   private async loadPlaybackVariants(provider: EmbyProvider, loadedItem: EmbyItem,
     loadGeneration: number): Promise<void> {
     const generation = ++this.playbackGeneration
+    let stage: string = 'variants'
+    playbackInfoLogger.info('load start generation=%{public}d type=%{public}s', generation, loadedItem.type)
+    this.tracksLoading = true
+    this.audioOptions = []
+    this.subtitleOptions = []
+    this.playbackSources = []
     this.playbackVariants = []
     this.selectedVariantId = loadedItem.variantId.length > 0 ? loadedItem.variantId : 'auto'
     try {
       const variants = await provider.getPlaybackVariants(loadedItem)
-      if (generation !== this.playbackGeneration || loadGeneration !== this.detailLoadGeneration ||
-        this.item === null || this.actionItem(this.item) !== loadedItem) return
+      stage = 'sources'
+      const sources = await provider.getPlaybackSources(loadedItem)
+      playbackInfoLogger.info('load response generation=%{public}d variants=%{public}d sources=%{public}d',
+        generation, variants.length, sources.length)
+      sources.forEach((source: EmbyMediaSource, index: number) => {
+        playbackInfoLogger.info('source generation=%{public}d index=%{public}d tracks=%{public}d audio=%{public}d externalAudio=%{public}d subtitles=%{public}d',
+          generation, index, source.tracks.length,
+          source.tracks.filter((track: EmbyMediaTrack) => track.type === 'Audio' && !track.isExternal).length,
+          source.tracks.filter((track: EmbyMediaTrack) => track.type === 'Audio' && track.isExternal).length,
+          source.tracks.filter((track: EmbyMediaTrack) => track.type === 'Subtitle').length)
+      })
+      stage = 'policy'
+      const mode = await EmbyPlaybackPolicy.loadMode()
+      if (!this.isCurrentPlaybackRequest(loadedItem.id, generation, loadGeneration)) {
+        playbackInfoLogger.info('load discarded generation=%{public}d reason=stale_target', generation)
+        return
+      }
       loadedItem.variants = variants
+      this.playbackSources = sources
+      if (sources.length > 0) {
+        this.autoSourceIndex = sources.indexOf(EmbyPlaybackPolicy.selectSource(sources, mode))
+        const preserve = this.trackItemId === loadedItem.id
+        this.trackItemId = loadedItem.id
+        this.updateTrackOptions(preserve)
+      } else {
+        playbackInfoLogger.warn('load empty generation=%{public}d reason=no_media_sources', generation)
+      }
       if (variants.length > 1) {
         const auto = new PlaybackVariant()
         auto.id = 'auto'
         auto.name = '自动'
         this.playbackVariants = [auto].concat(variants)
       }
-    } catch (_) {
+    } catch (err) {
+      // Never log raw error messages: network errors can include credential-bearing URLs.
+      const code = (err as BusinessError).code
+      playbackInfoLogger.warn('load failed generation=%{public}d stage=%{public}s code=%{public}d',
+        generation, stage, typeof code === 'number' ? code : -1)
       // Automatic playback stays available while version metadata is unavailable.
+    } finally {
+      if (generation === this.playbackGeneration && loadGeneration === this.detailLoadGeneration) {
+        this.tracksLoading = false
+      }
     }
+  }
+
+  private isCurrentPlaybackRequest(itemId: string, generation: number, loadGeneration: number): boolean {
+    if (generation !== this.playbackGeneration || loadGeneration !== this.detailLoadGeneration ||
+      this.item === null) return false
+    // @State may wrap model objects; compare stable media identity rather than references.
+    const target = this.actionItem(this.item)
+    return target !== null && target.id === itemId
+  }
+
+  private updateTrackOptions(preserve: boolean = false): void {
+    const index = this.selectedVariantId === 'auto' ? this.autoSourceIndex :
+      this.playbackSources.findIndex((source: EmbyMediaSource, i: number) =>
+        (source.id || 'source_' + i) === this.selectedVariantId)
+    const source = this.playbackSources[index]
+    if (source === undefined) {
+      playbackInfoLogger.warn('selection missing sourceIndex=%{public}d sources=%{public}d',
+        index, this.playbackSources.length)
+      this.audioOptions = []
+      this.subtitleOptions = []
+      return
+    }
+    const sourceId = source.id || 'source_' + index
+    preserve = preserve && this.trackSourceId === sourceId
+    this.trackSourceId = sourceId
+    const audio = source.tracks.filter((track: EmbyMediaTrack) => track.type === 'Audio' && !track.isExternal)
+    const subtitles = source.tracks.filter((track: EmbyMediaTrack) => track.type === 'Subtitle')
+    this.audioOptions = audio.map((track: EmbyMediaTrack) => this.trackOption(track))
+    const off = new DetailTrackOption()
+    off.id = -1
+    off.title = '无'
+    this.subtitleOptions = [off].concat(subtitles.map((track: EmbyMediaTrack) => this.trackOption(track)))
+    if (!preserve || !audio.some((track: EmbyMediaTrack) => track.index === this.selectedAudioId)) {
+      const defaultAudio = audio.find((track: EmbyMediaTrack) => track.index === source.defaultAudioIndex) ||
+        audio.find((track: EmbyMediaTrack) => track.isDefault) || audio[0]
+      this.selectedAudioId = defaultAudio === undefined ? -1 : defaultAudio.index
+    }
+    if (!preserve || !this.subtitleOptions.some((option: DetailTrackOption) => option.id === this.selectedSubtitleId)) {
+      this.selectedSubtitleId = subtitles.some((track: EmbyMediaTrack) => track.index === source.defaultSubtitleIndex) ?
+        source.defaultSubtitleIndex : -1
+    }
+    playbackInfoLogger.info('selection sourceIndex=%{public}d audioOptions=%{public}d subtitleTracks=%{public}d subtitleOptions=%{public}d selectedAudio=%{public}d selectedSubtitle=%{public}d',
+      index, this.audioOptions.length, subtitles.length, this.subtitleOptions.length,
+      this.selectedAudioId, this.selectedSubtitleId)
+  }
+
+  private trackOption(track: EmbyMediaTrack): DetailTrackOption {
+    const option = new DetailTrackOption()
+    option.id = track.index
+    option.title = track.label()
+    option.detail = track.detail()
+    option.summary = track.codec.toUpperCase() + (track.channels > 0 ? ' ' + track.channels + 'ch' : '')
+    return option
+  }
+
+  private selectionFor(item: EmbyItem): PlaybackTrackSelection | null {
+    if (this.tracksLoading || this.targetLoading || this.trackItemId !== item.id || this.playbackSources.length === 0) return null
+    const selection = new PlaybackTrackSelection()
+    selection.variantId = this.trackSourceId
+    selection.audioIndex = this.selectedAudioId
+    selection.subtitleIndex = this.selectedSubtitleId
+    return selection
   }
 
   private imageUrl(item: EmbyItem): string {
@@ -578,21 +879,6 @@ struct EmbyDetailPage {
 
     return provider.imageUrlFor(item, 800)
   }
-
-  private artworkSharedTransitionId(item: EmbyItem): string {
-    return 'emby_artwork_' + this.sourceId + '_' + item.id
-  }
-
-  private ambientArtworkMode(item: EmbyItem): string {
-    const provider = this.itemProvider()
-    if (provider === null) return 'none'
-    if (provider.backdropUrlFor(item, 1200).length > 0) return 'backdrop'
-    if (provider.thumbnailUrlFor(item, 900).length > 0) return 'thumbnail'
-    if (provider.imageUrlFor(item, 900).length > 0) return 'poster'
-    return 'none'
-  }
-
-
 
   private itemProvider(): EmbyProvider | null {
     return this.provider
@@ -653,11 +939,6 @@ struct EmbyDetailPage {
     return target === null ? '' : EmbyDetailPresentation.actionDescription(target)
   }
 
-  private actionProgress(item: EmbyItem): number {
-    const target = this.actionItem(item)
-    return target === null ? 0 : EmbyDetailPresentation.progress(target)
-  }
-
   private handlePrimaryAction(item: EmbyItem): void {
     const target = this.actionItem(item)
     if (target === null) return
@@ -669,29 +950,56 @@ struct EmbyDetailPage {
   private EpisodeSection(): void {
     Column({ space: AppSpacing.MD }) {
       Row({ space: AppSpacing.SM }) {
-        if (this.seasonItems.length > 0) {
-          Button({ type: ButtonType.Capsule }) {
-            Row({ space: AppSpacing.SM }) {
-              Text(this.selectedSeasonLabel()).fontSize(AppTypography.BODY)
-                .fontColor($r('app.color.text_primary')).maxLines(2)
-              SymbolGlyph($r('sys.symbol.chevron_down')).fontSize(14)
-                .fontColor([$r('app.color.text_secondary')]).accessibilityLevel('no')
-            }.padding(12)
-          }.backgroundColor(AppSurface.color(AppSurface.SURFACE))
-            .constraintSize({ minHeight: 44, maxWidth: '65%' })
-            .onClick(() => this.openSeasonSheet())
+        Text('剧集').fontSize(AppTypography.SECTION_TITLE).fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+        if (this.currentSeasonEpisodeCount > 0) {
+          Text(String(this.currentSeasonEpisodeCount) + ' 集').fontSize(AppTypography.META)
+            .fontColor($r('app.color.detail_text_secondary'))
         }
         Blank()
-        if (this.currentSeasonEpisodeCount > 0) {
-          Text('共 ' + this.currentSeasonEpisodeCount + ' 集').fontSize(AppTypography.META)
-            .fontColor($r('app.color.text_secondary'))
+        if (this.seasonItems.length > 0) {
+          Select(this.seasonSelectOptions())
+            .selected(this.selectedSeasonIndex())
+            .value(this.selectedSeasonLabel())
+            .font({ size: 15, weight: FontWeight.Medium })
+            .fontColor($r('sys.color.font_primary'))
+            .optionFontColor($r('sys.color.font_primary'))
+            .selectedOptionBgColor(Color.Transparent)
+            .selectedOptionFontColor($r('sys.color.brand'))
+            .attributeModifier(new DetailSelectMaterialModifier(this.materialThickness))
+            .constraintSize({ minHeight: 44, maxWidth: '56%' })
+            .accessibilityText('选择季，' + this.selectedSeasonLabel())
+            .onSelect((index: number) => {
+              if (index < 0 || index >= this.seasonItems.length) return
+              const season = this.seasonItems[index]
+              if (season.id !== this.selectedSeasonId || this.episodesError.length > 0) {
+                void this.selectSeason(season)
+              }
+            })
         }
-      }.width('100%')
+      }.width('100%').alignItems(VerticalAlign.Center)
       if (this.currentSeasonEpisodeCount > this.EPISODE_PAGE_SIZE) {
-        Button('快速选集 · ' + this.episodeRangeLabel(), { type: ButtonType.Normal })
-          .fontSize(AppTypography.BODY).fontColor($r('app.color.accent_blue'))
-          .backgroundColor(Color.Transparent).constraintSize({ minHeight: 44 })
-          .onClick(() => this.openEpisodeRangeSheet())
+        Row({ space: AppSpacing.SM }) {
+          Text('快速选集').fontSize(AppTypography.BODY)
+            .fontColor($r('app.color.detail_text_secondary'))
+          Blank()
+          Select(this.episodeRangeSelectOptions())
+            .selected(this.episodeRangeStarts().indexOf(this.episodeRangeStart))
+            .value('第 ' + this.rangeText(this.episodeRangeStart) + ' 集')
+            .font({ size: 15, weight: FontWeight.Medium })
+            .fontColor($r('sys.color.font_primary'))
+            .optionFontColor($r('sys.color.font_primary'))
+            .selectedOptionBgColor(Color.Transparent)
+            .selectedOptionFontColor($r('sys.color.brand'))
+            .attributeModifier(new DetailSelectMaterialModifier(this.materialThickness))
+            .constraintSize({ minHeight: 44, maxWidth: '56%' })
+            .accessibilityText('快速选集，第 ' + this.rangeText(this.episodeRangeStart) + ' 集')
+            .onSelect((index: number) => {
+              const starts = this.episodeRangeStarts()
+              if (index < 0 || index >= starts.length) return
+              void this.loadEpisodes(starts[index])
+            })
+        }.width('100%').alignItems(VerticalAlign.Center)
       }
       if (this.episodesLoading) {
         PageLoadingState({ title: '正在读取剧集', minHeight: 160 })
@@ -700,33 +1008,201 @@ struct EmbyDetailPage {
           onRetry: () => { void this.retryEpisodes() } })
       } else if (this.episodeItems.length === 0) {
         Text(this.selectedSeasonId.length > 0 ? '这一季暂无剧集' : '暂无剧集').fontSize(AppTypography.BODY_LARGE)
-          .fontColor($r('app.color.text_secondary')).padding({ top: 32, bottom: 32 }).width('100%')
+          .fontColor($r('app.color.detail_text_secondary')).padding({ top: 32, bottom: 32 }).width('100%')
       } else {
-        Column() {
-          ForEach(this.visibleEpisodeItems(), (episode: EmbyItem, index: number) => {
-            EpisodeRow({
-              indexLabel: episode.indexNumber > 0 ? String(episode.indexNumber).padStart(2, '0') :
-                String(this.episodeRangeStart + index + 1),
-              title: episode.name, meta: this.episodeMeta(episode),
-              artworkUrl: this.episodeArtworkUrl(episode), progress: this.episodeProgress(episode),
-              played: EmbyDetailPresentation.watched(episode),
-              isResumeTarget: this.isResumeTarget(episode),
-              hideSpoiler: this.hideSpoilers && !EmbyDetailPresentation.watched(episode),
-              playbackEnabled: !this.playing, showDivider: index < this.episodeItems.length - 1,
-              onRowClick: () => { void this.playEpisode(episode) }
-            })
-          }, (episode: EmbyItem) => 'detail_episode_' + episode.id)
-        }.width('100%').padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-          .borderRadius(AppRadius.SURFACE).backgroundColor(AppSurface.color(AppSurface.SURFACE)).clip(true)
-        if (this.episodeRangeStart + this.episodeItems.length < this.currentSeasonEpisodeCount) {
-          Button(this.loadingMore ? '正在加载' : this.episodesError.length > 0 ? '加载失败，点击重试' : '加载更多剧集',
-            { type: ButtonType.Capsule })
-            .width('100%').constraintSize({ minHeight: 48 }).fontSize(AppTypography.BODY)
-            .fontColor($r('app.color.accent_blue')).backgroundColor(AppSurface.color(AppSurface.SURFACE))
-            .enabled(!this.loadingMore).onClick(() => { void this.loadMoreEpisodes() })
+        Scroll() {
+          Row({ space: AppSpacing.SM }) {
+            ForEach(this.visibleEpisodeItems(), (episode: EmbyItem, index: number) => {
+              this.EpisodeRailCard(episode, index)
+            }, (episode: EmbyItem) => 'detail_episode_' + episode.id)
+          }
+        }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+          .align(Alignment.TopStart)
+          .onReachEnd(() => {
+            if (this.episodesError.length === 0) void this.loadMoreEpisodes()
+          })
+        if (this.loadingMore) {
+          Row({ space: AppSpacing.SM }) {
+            LoadingProgress().width(20).height(20).color($r('app.color.accent_blue'))
+            Text('正在加载剧集').fontSize(AppTypography.META)
+              .fontColor($r('app.color.detail_text_secondary'))
+          }.width('100%').justifyContent(FlexAlign.Center).height(44)
+        } else if (this.episodesError.length > 0) {
+          Button('加载失败，点击重试', { type: ButtonType.Normal })
+            .fontSize(AppTypography.BODY).fontColor($r('app.color.accent_blue'))
+            .backgroundColor(Color.Transparent).constraintSize({ minHeight: 44 })
+            .onClick(() => { void this.loadMoreEpisodes() })
         }
       }
     }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private EpisodeRailCard(episode: EmbyItem, index: number): void {
+    Column({ space: AppSpacing.SM }) {
+      Stack({ alignContent: Alignment.BottomStart }) {
+        Image(this.episodeArtworkUrl(episode).length > 0 ? this.episodeArtworkUrl(episode) :
+          $r('app.media.ic_placeholder'))
+          .width('100%').height(112).objectFit(ImageFit.Cover)
+          .accessibilityLevel('no')
+        Column().width('100%').height(58)
+          .linearGradient({ direction: GradientDirection.Top,
+            colors: [['#B3000000', 0], ['#00000000', 1]] })
+        Row({ space: AppSpacing.XS }) {
+          if (EmbyDetailPresentation.watched(episode)) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill')).fontSize(17)
+              .fontColor([Color.White]).accessibilityLevel('no')
+          } else {
+            SymbolGlyph($r('sys.symbol.play_fill')).fontSize(15)
+              .fontColor([Color.White]).accessibilityLevel('no')
+          }
+          Text(this.episodeIndexLabel(episode, index)).fontSize(AppTypography.CAPTION)
+            .fontWeight(FontWeight.Medium).fontColor(Color.White)
+        }.padding({ left: 10, right: 10, bottom: 9 })
+      }.width(this.episodeCardWidth()).height(112).borderRadius(AppRadius.MEDIA_LANDSCAPE).clip(true)
+        .border({ width: this.isResumeTarget(episode) ? 2 : 0,
+          color: $r('app.color.accent_blue') })
+        .shadow({ radius: 12, color: $r('app.color.shadow_surface'), offsetY: 4 })
+      Text(episode.name)
+        .width(this.episodeCardWidth()).fontSize(AppTypography.BODY)
+        .fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+        .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+      Text(this.episodeMeta(episode)).width(this.episodeCardWidth()).fontSize(AppTypography.CAPTION)
+        .fontColor($r('app.color.detail_text_secondary')).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+    }.width(this.episodeCardWidth()).alignItems(HorizontalAlign.Start)
+      .enabled(!this.playing).accessibilityGroup(true)
+      .accessibilityText('第 ' + this.episodeIndexLabel(episode, index) + ' 集，' + episode.name)
+      .onClick(() => { void this.playEpisode(episode) })
+  }
+
+  @Builder
+  private SeasonSection(): void {
+    Column({ space: AppSpacing.MD }) {
+      MediaSectionHeader({ title: '季', actionText: String(this.seasonItems.length) + ' 季' })
+      Scroll() {
+        Row({ space: AppSpacing.SM }) {
+          ForEach(this.seasonItems, (season: EmbyItem) => {
+            this.SeasonRailCard(season)
+          }, (season: EmbyItem) => 'detail_season_' + season.id)
+        }
+      }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+        .align(Alignment.TopStart)
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private SeasonRailCard(season: EmbyItem): void {
+    Column({ space: AppSpacing.SM }) {
+      Stack({ alignContent: Alignment.Center }) {
+        Image(this.seasonArtworkUrl(season).length > 0 ? this.seasonArtworkUrl(season) :
+          $r('app.media.ic_placeholder'))
+          .width(112).height(168).objectFit(ImageFit.Cover).accessibilityLevel('no')
+      }.width(112).height(168).borderRadius(AppRadius.MEDIA_POSTER).clip(true)
+        .border({ width: season.id === this.selectedSeasonId ? 2 : 0,
+          color: $r('app.color.accent_blue') })
+        .shadow({ radius: 12, color: $r('app.color.shadow_surface'), offsetY: 4 })
+      Text(season.subtitle().length > 0 ? season.subtitle() : season.name)
+        .width(112).fontSize(AppTypography.BODY).fontWeight(FontWeight.Medium)
+        .fontColor(season.id === this.selectedSeasonId ? $r('app.color.accent_blue') :
+          $r('app.color.text_primary')).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+    }.width(112).alignItems(HorizontalAlign.Start)
+      .accessibilityText((season.subtitle().length > 0 ? season.subtitle() : season.name) +
+        (season.id === this.selectedSeasonId ? '，当前季' : ''))
+      .onClick(() => {
+        if (season.id !== this.selectedSeasonId || this.episodesError.length > 0) void this.selectSeason(season)
+      })
+  }
+
+  private episodeCardWidth(): number {
+    return Math.max(176, Math.min(236, this.screenWidthVp * 0.58))
+  }
+
+  private episodeIndexLabel(episode: EmbyItem, index: number): string {
+    return episode.indexNumber > 0 ? String(episode.indexNumber).padStart(2, '0') :
+      String(this.episodeRangeStart + index + 1)
+  }
+
+  @Builder
+  private PeopleSection(item: EmbyItem): void {
+    Column({ space: AppSpacing.MD }) {
+      MediaSectionHeader({ title: '演职人员', actionText: String(item.people.length) + ' 人' })
+      Scroll() {
+        Row({ space: AppSpacing.MD }) {
+          ForEach(this.visiblePeople(item), (person: EmbyPerson) => {
+            this.PersonCard(person)
+          }, (person: EmbyPerson) => 'detail_person_' + person.id + '_' + person.name)
+        }
+      }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private PersonCard(person: EmbyPerson): void {
+    Column({ space: AppSpacing.SM }) {
+      Stack({ alignContent: Alignment.Center }) {
+        if (this.personArtworkUrl(person).length > 0) {
+          Image(this.personArtworkUrl(person)).width(76).height(76).objectFit(ImageFit.Cover)
+            .accessibilityLevel('no')
+        } else {
+          Circle().width(76).height(76).fill($r('app.color.detail_surface'))
+          Text(this.personInitial(person)).fontSize(AppTypography.PAGE_TITLE).fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.accent_blue'))
+        }
+      }.width(76).height(76).borderRadius(38).clip(true)
+        .border({ width: 1, color: AppSurface.borderColor() })
+        .shadow({ radius: 12, color: $r('app.color.shadow_surface'), offsetY: 4 })
+      Text(person.name).width(92).fontSize(AppTypography.BODY).fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary')).maxLines(1).textAlign(TextAlign.Center)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Text(this.personRole(person)).width(92).fontSize(AppTypography.CAPTION)
+        .fontColor($r('app.color.detail_text_secondary')).maxLines(1).textAlign(TextAlign.Center)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }.width(92).alignItems(HorizontalAlign.Center).accessibilityGroup(true)
+      .accessibilityText(person.name + '，' + this.personRole(person))
+  }
+
+  @Builder
+  private SimilarSection(): void {
+    Column({ space: AppSpacing.MD }) {
+      MediaSectionHeader({ title: '相似作品' })
+      Scroll() {
+        Row({ space: AppSpacing.SM }) {
+          ForEach(this.similarItems, (entry: EmbyItem) => {
+            MediaPosterCard({
+              title: entry.name,
+              subtitle: entry.subtitle(),
+              subtitleColor: $r('app.color.detail_text_secondary'),
+              artworkUrl: this.imageUrl(entry),
+              cardWidth: this.collectionPosterWidth(),
+              enableSharedTransition: true,
+              onCardClick: (transitionId: string) => { void this.openCollectionItem(entry, transitionId,
+                this.imageUrl(entry)) }
+            })
+          }, (entry: EmbyItem) => 'detail_similar_' + entry.id)
+        }
+      }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  private visiblePeople(item: EmbyItem): EmbyPerson[] {
+    return item.people.slice(0, 16)
+  }
+
+  private personArtworkUrl(person: EmbyPerson): string {
+    return this.provider === null ? '' : this.provider.personImageUrlFor(person, 320)
+  }
+
+  private personInitial(person: EmbyPerson): string {
+    return person.name.length > 0 ? person.name.substring(0, 1) : '人'
+  }
+
+  private personRole(person: EmbyPerson): string {
+    if (person.role.length > 0) return person.role
+    if (person.type === 'Director') return '导演'
+    if (person.type === 'Writer') return '编剧'
+    if (person.type === 'Producer') return '制片'
+    if (person.type === 'Actor') return '演员'
+    return person.type.length > 0 ? person.type : '演职人员'
   }
 
   @Builder
@@ -738,10 +1214,12 @@ struct EmbyDetailPage {
           MediaPosterCard({
             title: entry.name,
             subtitle: entry.subtitle(),
+            subtitleColor: $r('app.color.detail_text_secondary'),
             artworkUrl: this.itemProvider() === null ? '' : this.itemProvider()!.imageUrlFor(entry, 600),
             cardWidth: this.collectionPosterWidth(),
-            sharedTransitionId: this.artworkSharedTransitionId(entry),
-            onCardClick: () => { void this.openCollectionItem(entry) }
+            enableSharedTransition: true,
+            onCardClick: (transitionId: string) => { void this.openCollectionItem(entry, transitionId,
+              this.itemProvider() === null ? '' : this.itemProvider()!.imageUrlFor(entry, 600)) }
           })
           .margin({ right: AppSpacing.SM, bottom: AppSpacing.MD })
         }, (entry: EmbyItem) => 'collection_item_' + entry.id)
@@ -757,19 +1235,11 @@ struct EmbyDetailPage {
     return Math.max(112, Math.min(180, width))
   }
 
-  private async openCollectionItem(entry: EmbyItem): Promise<void> {
+  private async openCollectionItem(entry: EmbyItem, artworkTransitionId: string = '',
+    transitionArtworkUrl: string = ''): Promise<void> {
     if (entry.type === 'Series' || entry.type === 'Season' || entry.type === 'Episode' ||
       entry.type === 'Movie' || entry.type === 'Video' || entry.type === 'BoxSet') {
-      const params: Record<string, Object> = { 'sourceId': this.sourceId, 'itemId': entry.id }
-      if (entry.type === 'Season' && entry.seriesId.length > 0) {
-        params['itemId'] = entry.seriesId
-        params['initialSeasonId'] = entry.id
-      } else if (entry.type === 'Episode' && entry.seriesId.length > 0) {
-        params['itemId'] = entry.seriesId
-        params['initialSeasonId'] = entry.seasonId.length > 0 ? entry.seasonId : entry.parentId
-        params['initialEpisodeId'] = entry.id
-        params['initialEpisodeIndex'] = entry.indexNumber
-      }
+      const params = buildEmbyDetailRouteParams(this.sourceId, entry, artworkTransitionId, transitionArtworkUrl)
       await this.getUIContext().getRouter().pushUrl({ url: 'pages/emby/EmbyDetailPage', params: params })
       return
     }
@@ -797,7 +1267,21 @@ struct EmbyDetailPage {
 
   private episodeArtworkUrl(episode: EmbyItem): string {
     const provider = this.itemProvider()
-    return provider === null ? '' : provider.thumbnailUrlFor(episode, 320)
+    if (provider === null) return this.ambientArtworkUrl
+    const thumbnail = provider.thumbnailUrlFor(episode, 640)
+    if (thumbnail.length > 0) return thumbnail
+    const backdrop = provider.backdropUrlFor(episode, 640)
+    if (backdrop.length > 0) return backdrop
+    const primary = provider.imageUrlFor(episode, 640)
+    return primary.length > 0 ? primary : this.ambientArtworkUrl
+  }
+
+  private seasonArtworkUrl(season: EmbyItem): string {
+    const provider = this.itemProvider()
+    if (provider === null) return ''
+    const seasonPoster = provider.imageUrlFor(season, 640)
+    if (seasonPoster.length > 0) return seasonPoster
+    return this.item === null ? '' : provider.imageUrlFor(this.item, 640)
   }
 
   private async selectSeason(season: EmbyItem): Promise<void> {
@@ -830,9 +1314,9 @@ struct EmbyDetailPage {
       if (generation !== this.detailLoadGeneration) return
       this.initialEpisodeId = ''
       await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, episode, queue,
-        EmbyDetailPresentation.watched(episode))
+        EmbyDetailPresentation.watched(episode), this.selectionFor(episode))
     } catch (_) {
-      promptAction.showToast({ message: '无法播放该媒体' })
+      this.showDetailToast('无法播放该媒体')
     } finally {
       this.playing = false
     }
@@ -843,9 +1327,9 @@ struct EmbyDetailPage {
     this.playing = true
     try {
       await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, item, [item],
-        EmbyDetailPresentation.watched(item))
+        EmbyDetailPresentation.watched(item), this.selectionFor(item))
     } catch (_) {
-      promptAction.showToast({ message: '无法播放该媒体' })
+      this.showDetailToast('无法播放该媒体')
     } finally {
       this.playing = false
     }
@@ -857,6 +1341,15 @@ struct EmbyDetailPage {
     if (target === null) return
     this.selectedVariantId = variant.id
     target.variantId = variant.id === 'auto' ? '' : variant.id
+    this.updateTrackOptions()
+  }
+
+  private showDetailToast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast(buildDetailToastOptions(message, this.materialThickness))
+    } catch (_) {
+      // The page may already be gone when an asynchronous playback request fails.
+    }
   }
 
   private selectedVariantLabel(): string {
@@ -872,28 +1365,32 @@ struct EmbyDetailPage {
 
   private openVariantMenu(): void {
     if (this.playbackVariants.length < 2) return
-    this.sheetKind = 'variant'
+    this.detailSheetType = EmbyDetailSheetType.PLAYBACK_VARIANTS
     this.showDetailSheet = true
+  }
+
+  private openMetadataSheet(type: EmbyDetailSheetType): void {
+    if (this.item === null || this.loading || this.showDetailSheet) return
+    if (type === EmbyDetailSheetType.OVERVIEW && this.item.overview.length === 0) return
+    this.detailSheetType = type
+    this.showDetailSheet = true
+  }
+
+  private seasonSelectOptions(): SelectOption[] {
+    return this.seasonItems.map((season: EmbyItem): SelectOption => {
+      return { value: season.subtitle().length > 0 ? season.subtitle() : season.name }
+    })
+  }
+
+  private selectedSeasonIndex(): number {
+    return this.seasonItems.findIndex((season: EmbyItem) => season.id === this.selectedSeasonId)
   }
 
   private selectedSeasonLabel(): string {
-    for (let i = 0; i < this.seasonItems.length; i++) {
-      const season = this.seasonItems[i]
-      if (season.id === this.selectedSeasonId) return season.subtitle().length > 0 ? season.subtitle() : season.name
-    }
-    return this.seasonItems.length > 0 ? this.seasonItems[0].name : '选择季'
-  }
-
-  private openSeasonSheet(): void {
-    if (this.seasonItems.length === 0) return
-    this.sheetKind = 'season'
-    this.showDetailSheet = true
-  }
-
-  private openEpisodeRangeSheet(): void {
-    if (this.currentSeasonEpisodeCount <= this.EPISODE_PAGE_SIZE) return
-    this.sheetKind = 'range'
-    this.showDetailSheet = true
+    const index = this.selectedSeasonIndex()
+    if (index < 0) return '选择季'
+    const season = this.seasonItems[index]
+    return season.subtitle().length > 0 ? season.subtitle() : season.name
   }
 
   private visibleEpisodeItems(): EmbyItem[] {
@@ -911,9 +1408,10 @@ struct EmbyDetailPage {
     return String(start + 1) + '–' + String(end)
   }
 
-  private episodeRangeLabel(): string {
-    return String(this.episodeRangeStart + 1) + '–' +
-      String(Math.min(this.currentSeasonEpisodeCount, this.episodeRangeStart + Math.max(1, this.episodeItems.length)))
+  private episodeRangeSelectOptions(): SelectOption[] {
+    return this.episodeRangeStarts().map((start: number): SelectOption => {
+      return { value: '第 ' + this.rangeText(start) + ' 集' }
+    })
   }
 
   private isResumeTarget(episode: EmbyItem): boolean {
@@ -941,27 +1439,12 @@ struct EmbyDetailPage {
   }
 
   @Builder
-  private SelectionSheet(): void {
-    HdsNavigation() {
+  private DetailSheet(): void {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      HdsNavigation() {
       Scroll(this.sheetScroller) {
         Column({ space: AppSpacing.SM }) {
-          if (this.sheetKind === 'season') {
-            ForEach(this.seasonItems, (season: EmbyItem) => {
-              this.SelectionRow(season.subtitle().length > 0 ? season.subtitle() : season.name,
-                this.seasonEpisodeCount(season) > 0 ? this.seasonEpisodeCount(season) + ' 集' : '',
-                season.id === this.selectedSeasonId, () => {
-                  this.showDetailSheet = false
-                  if (season.id !== this.selectedSeasonId || this.episodesError.length > 0) void this.selectSeason(season)
-                })
-            }, (season: EmbyItem) => 'season_' + season.id)
-          } else if (this.sheetKind === 'range') {
-            ForEach(this.episodeRangeStarts(), (start: number) => {
-              this.SelectionRow('第 ' + this.rangeText(start) + ' 集', '', start === this.episodeRangeStart, () => {
-                this.showDetailSheet = false
-                void this.loadEpisodes(start)
-              })
-            }, (start: number) => 'range_' + start)
-          } else {
+          if (this.detailSheetType === EmbyDetailSheetType.PLAYBACK_VARIANTS) {
             ForEach(this.playbackVariants, (variant: PlaybackVariant) => {
               this.SelectionRow(variant.name.length > 0 ? variant.name : variant.id, variant.quality,
                 variant.id === this.selectedVariantId, () => {
@@ -969,18 +1452,28 @@ struct EmbyDetailPage {
                   this.showDetailSheet = false
                 })
             }, (variant: PlaybackVariant) => 'variant_' + variant.id)
+          } else if (this.item !== null) {
+            Text(this.item!.name).fontSize(AppTypography.META).fontColor($r('sys.color.font_secondary'))
+              .width('100%').padding({ bottom: AppSpacing.SM })
+            if (this.detailSheetType === EmbyDetailSheetType.OVERVIEW) {
+              Text(this.item!.overview).fontSize(AppTypography.BODY_LARGE).lineHeight(28)
+                .fontColor($r('sys.color.font_primary')).width('100%').copyOption(CopyOptions.LocalDevice)
+            } else {
+              this.DetailInformationContent(this.item!)
+            }
           }
-        }.width('100%').padding(AppSpacing.MD)
-      }.width('100%').height('100%').scrollBar(BarState.Auto)
-    }.width('100%').height('100%').mode(NavigationMode.Stack).hideBackButton(true)
-      .titleMode(HdsNavigationTitleMode.MODAL)
-      .titleBar({ style: buildImmersiveTitleBarStyle(this.hdsMaterialLevel), content: {
-        title: { mainTitle: this.sheetKind === 'season' ? '选择季' : this.sheetKind === 'range' ? '快速选集' : '播放版本' },
-        menu: { value: [{ content: { icon: $r('sys.symbol.xmark'), type: IconStyleMode.SMALL,
-          action: () => { this.showDetailSheet = false } } }] }
-      } })
-      .backgroundColor(AppSurface.color(AppSurface.SURFACE))
-      .bindToScrollable([this.sheetScroller])
+        }.width('100%').alignItems(HorizontalAlign.Start)
+          .padding({ left: 20, right: 20, top: 24, bottom: 24 })
+      }.width('100%').height('100%').align(Alignment.TopStart).scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .backgroundColor(Color.Transparent)
+        .onAppear(() => this.sheetScroller.scrollTo({ xOffset: 0, yOffset: 0 }))
+      }.width('100%').height('100%').mode(NavigationMode.Stack)
+        .hideTitleBar(true).hideBackButton(true)
+        .backgroundColor(deviceInfo.sdkApiVersion >= 26 ? Color.Transparent : $r('app.color.page_background'))
+    }.width('100%').height('100%')
+      // The bindSheet backplate owns the material and the unsupported-device surface fallback.
+      .backgroundColor(Color.Transparent)
   }
 
   @Builder
@@ -988,14 +1481,14 @@ struct EmbyDetailPage {
     Button({ type: ButtonType.Normal }) {
       Row({ space: AppSpacing.MD }) {
         Column({ space: 4 }) {
-          Text(title).fontSize(AppTypography.BODY_LARGE).fontColor($r('app.color.text_primary')).width('100%')
+          Text(title).fontSize(AppTypography.BODY_LARGE).fontColor($r('sys.color.font_primary')).width('100%')
           if (subtitle.length > 0) {
-            Text(subtitle).fontSize(AppTypography.META).fontColor($r('app.color.text_secondary')).width('100%')
+            Text(subtitle).fontSize(AppTypography.META).fontColor($r('sys.color.font_secondary')).width('100%')
           }
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         if (selected) {
           SymbolGlyph($r('sys.symbol.checkmark')).fontSize(20)
-            .fontColor([$r('app.color.accent_blue')]).accessibilityLevel('no')
+            .fontColor([$r('sys.color.brand')]).accessibilityLevel('no')
         }
       }.width('100%').padding(AppSpacing.MD)
     }.width('100%').constraintSize({ minHeight: 56 }).borderRadius(AppRadius.SMALL_BUTTON)
@@ -1023,6 +1516,11 @@ struct EmbyDetailPage {
     const hours = Math.floor(totalMinutes / 60)
     const minutes = totalMinutes % 60
     return hours > 0 ? hours + ' 小时 ' + minutes + ' 分钟' : minutes + ' 分钟'
+  }
+
+  private displayDate(value: string): string {
+    const date = value.indexOf('T') > 0 ? value.substring(0, value.indexOf('T')) : value
+    return date.length > 0 ? date : value
   }
 
   private sortByIndex(items: EmbyItem[]): void {

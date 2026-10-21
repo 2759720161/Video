@@ -29,6 +29,18 @@
       "value": "#1E1E1E"
     },
     {
+      "name": "detail_atmosphere_wash",
+      "value": "#A6121212"
+    },
+    {
+      "name": "detail_text_secondary",
+      "value": "#CCD2DC"
+    },
+    {
+      "name": "detail_surface",
+      "value": "#BF1E1E1E"
+    },
+    {
       "name": "titlebar_button_surface",
       "value": "#B31C2735"
     },
@@ -343,6 +355,26 @@
     {
       "name": "side_bar_background",
       "value": "#E61A1A1A"
+    },
+    {
+      "name": "cat_subscription_background",
+      "value": "#111319"
+    },
+    {
+      "name": "cat_subscription_field",
+      "value": "#1E222B"
+    },
+    {
+      "name": "cat_home_selected_surface",
+      "value": "#18314C"
+    },
+    {
+      "name": "cat_hero_text_shadow",
+      "value": "#4D000000"
+    },
+    {
+      "name": "cat_hero_badge_background",
+      "value": "#4D000000"
     }
   ]
 }

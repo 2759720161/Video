@@ -671,14 +671,7 @@ struct FolderPage {
     this.isCurrentM3u8Package = false
     try {
       const context = getContext(this) as common.UIAbilityContext
-      let entries = await UserDownloadFolder.listOwnDirectory(context, this.relativePath)
-      if (entries === null) {
-        logger.warn('刷新目录读取失败，尝试重新激活应用专属目录')
-        const reactivatedPath = await UserDownloadFolder.reactivateOwnFolder(context)
-        if (reactivatedPath.length > 0) {
-          entries = await UserDownloadFolder.listOwnDirectory(context, this.relativePath)
-        }
-      }
+      const entries = await UserDownloadFolder.listOwnDirectory(context, this.relativePath)
       if (entries === null) {
         this.entries = []
         if (this.relativePath.length > 0) {
@@ -724,7 +717,7 @@ struct FolderPage {
 
   private emptyStateMessage(isSearchEmpty: boolean): string {
     if (this.isUnavailable) {
-      return '请点击刷新以重新激活应用专属目录'
+      return '请在服务页点击“本地文件夹”创建或恢复专属目录'
     }
     if (isSearchEmpty) {
       return '尝试修改搜索关键词'

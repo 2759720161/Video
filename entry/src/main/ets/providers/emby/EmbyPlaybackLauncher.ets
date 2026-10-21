@@ -2,16 +2,20 @@ import { EmbyItem } from './EmbyModels'
 import { MediaItem } from '../../core/media/MediaItem'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
 import { ArtworkResolver } from '../../services/ArtworkResolver'
+import { PlaybackTrackSelection } from '../../core/playback/PlaybackTrackSelection'
 
 export class EmbyPlaybackLauncher {
   static async open(uiContext: UIContext, sourceId: string, item: EmbyItem,
-    items: EmbyItem[] = [item], startFromBeginning: boolean = false): Promise<void> {
+    items: EmbyItem[] = [item], startFromBeginning: boolean = false,
+    trackSelection: PlaybackTrackSelection | null = null): Promise<void> {
     const normalizedSourceId = EmbyPlaybackLauncher.normalizeText(sourceId)
     if (item === null || typeof item !== 'object' || Array.isArray(item) || normalizedSourceId.length === 0 ||
       EmbyPlaybackLauncher.normalizeText(item.id).length === 0) {
       throw new Error('媒体来源或媒体标识无效')
     }
     const media = EmbyPlaybackLauncher.toMediaItem(normalizedSourceId, item)
+    media.trackSelection = trackSelection
+    if (trackSelection !== null) media.variantId = trackSelection.variantId
     const queue: MediaItem[] = []
     const sourceItems: EmbyItem[] = Array.isArray(items) ? items : []
     for (let i = 0; i < sourceItems.length; i++) {

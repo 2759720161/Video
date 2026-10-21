@@ -1,9 +1,11 @@
+import { buildDetailToastOptions } from '../../utils/DetailMaterial'
 import { promptAction } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import { HdsNavigation, HdsNavigationIconOptions, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
-import { EmbyItem, EmbyServerConfig } from '../../providers/emby/EmbyModels'
+import { EmbyItem, EmbyItemsPage, EmbyServerConfig } from '../../providers/emby/EmbyModels'
 import { EmbyProvider } from '../../providers/emby/EmbyProvider'
 import { EmbyLibraryPresentation } from '../../providers/emby/EmbyLibraryPresentation'
+import { buildEmbyDetailRouteParams } from '../../providers/emby/EmbyDetailRoute'
 import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { MediaSourceStore } from '../../store/MediaSourceStore'
 import { EmbySourceConfigCodec } from '../../providers/emby/EmbySourceConfig'
@@ -70,6 +72,13 @@ struct EmbyLibraryPage {
   @State private globalSearchItems: EmbyItem[] = []
   @State private searchLoading: boolean = false
   @State private resumeOnly: boolean = false
+  @State private nextUpOnly: boolean = false
+  @State private moreLoading: boolean = false
+  @State private moreError: string = ''
+  @State private hasMore: boolean = false
+  @State private totalItems: number = 0
+  private nextStartIndex: number = 0
+  private readonly pageSize: number = 40
   @State private pageWidth: number = 360
   private scroller: Scroller = new Scroller()
   private loadGeneration: number = 0
@@ -88,6 +97,7 @@ struct EmbyLibraryPage {
       }
       if (params['view'] === 'latest') this.latestOnly = true
       if (params['view'] === 'resume') this.resumeOnly = true
+      if (params['view'] === 'nextup') this.nextUpOnly = true
       if (params['libraryRoot'] === true || params['libraryRoot'] === 'true') this.libraryRoot = true
       if (typeof params['collectionType'] === 'string') {
         this.collectionType = (params['collectionType'] as string).trim()
@@ -95,6 +105,12 @@ struct EmbyLibraryPage {
       if (params['browseMode'] === 'folders') this.folderBrowse = true
     }
     this.loadItems()
+  }
+
+  aboutToDisappear(): void {
+    this.loadGeneration++
+    this.searchGeneration++
+    if (this.searchTimer >= 0) clearTimeout(this.searchTimer)
   }
 
   build() {
@@ -110,15 +126,17 @@ struct EmbyLibraryPage {
           .align(Alignment.Top)
       }
 
-      Column()
-        .width('100%')
-        .height(620)
-        .linearGradient({
-          direction: GradientDirection.Bottom,
-          colors: [['#22000000', 0], [$r('app.color.page_background_media'), 0.48],
-            [$r('app.color.page_background'), 1]]
-        })
-        .align(Alignment.Top)
+      if (this.isHome()) {
+        Column()
+          .width('100%')
+          .height(620)
+          .linearGradient({
+            direction: GradientDirection.Bottom,
+            colors: [['#22000000', 0], [$r('app.color.page_background_media'), 0.48],
+              [$r('app.color.page_background'), 1]]
+          })
+          .align(Alignment.Top)
+      }
 
       HdsNavigation() {
         Scroll(this.scroller) {
@@ -143,6 +161,14 @@ struct EmbyLibraryPage {
             this.LibraryContent()
           }
 
+          if (!this.isHome() && !this.loading && this.errorText.length === 0 &&
+            this.searchText.trim().length === 0 && this.hasMore) {
+            Button(this.moreLoading ? '正在加载' : this.moreError.length > 0 ? '加载失败，点击重试' : '加载更多')
+              .height(48).margin({ top: 20 }).backgroundColor($r('app.color.button_ghost_bg'))
+              .fontColor($r('app.color.accent_blue')).enabled(!this.moreLoading)
+              .onClick(() => { void this.loadMore() })
+          }
+
           Blank().height(this.bottomSafeHeight + 28).width('100%')
           }
           .width('100%')
@@ -155,6 +181,7 @@ struct EmbyLibraryPage {
         .height('100%')
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Off)
+        .onReachEnd(() => { if (this.moreError.length === 0) void this.loadMore() })
       }
       .width('100%')
       .height('100%')
@@ -162,7 +189,7 @@ struct EmbyLibraryPage {
       .titleBar(this.buildEmbyTitleBarOptions())
       .bindToScrollable([this.scroller])
       .titleMode(HdsNavigationTitleMode.MINI)
-      .hideBackButton(this.isHome())
+      .hideBackButton(false)
       .backgroundColor(Color.Transparent)
       .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
 
@@ -300,7 +327,6 @@ struct EmbyLibraryPage {
       heightVp: AppDimensions.HERO_PHONE_HEIGHT,
       widthVp: this.pageWidth,
       actionText: this.featuredActionLabel(item),
-      usePosterFallback: this.heroUsesPoster(item),
       onPlay: () => { void this.openFeaturedItem(item) }
     })
   }
@@ -347,8 +373,9 @@ struct EmbyLibraryPage {
               MediaPosterCard({ title: item.name, subtitle: item.subtitle(),
                 artworkUrl: this.itemImageUrl(item, 500),
                 cardWidth: ResponsiveSizeClassResolver.posterWidth(this.pageWidth),
-                sharedTransitionId: this.artworkSharedTransitionId(item),
-                onCardClick: () => this.openItem(item) })
+                enableSharedTransition: true,
+                onCardClick: (transitionId: string) => this.openItem(item, false, transitionId,
+                  this.itemImageUrl(item, 500)) })
             }
           }, (item: EmbyItem) => sectionId + '_' + item.id)
         }
@@ -379,7 +406,7 @@ struct EmbyLibraryPage {
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
-        Text(this.resumeItems.length + ' 项').fontSize(13).fontColor($r('app.color.text_secondary'))
+        Text(this.totalItems + ' 项').fontSize(13).fontColor($r('app.color.text_secondary'))
       }
       .width('100%')
 
@@ -397,7 +424,7 @@ struct EmbyLibraryPage {
   private LibraryContent(): void {
     Column({ space: 16 }) {
       Row() {
-        Text(this.items.length + ' 个' + (this.folderBrowse ? '目录项目' : EmbyLibraryPresentation.contentLabel(this.collectionType)))
+        Text(this.totalItems + ' 个' + (this.folderBrowse ? '目录项目' : EmbyLibraryPresentation.contentLabel(this.collectionType)))
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
           .layoutWeight(1)
@@ -423,7 +450,8 @@ struct EmbyLibraryPage {
               .onClick(() => this.folderBrowse ? this.openMediaMode() : this.openFolderMode())
           }
         } else {
-          Text('按名称排序').fontSize(12).fontColor($r('app.color.text_secondary'))
+          Text(this.nextUpOnly ? '待追看' : this.latestOnly ? '最近添加' : '按名称排序')
+            .fontSize(12).fontColor($r('app.color.text_secondary'))
         }
       }
       .width('100%')
@@ -468,19 +496,17 @@ struct EmbyLibraryPage {
     Grid() {
       ForEach(source, (item: EmbyItem) => {
         GridItem() {
-          if (item.resumePositionMs() > 0) {
-            this.ResumeMediaCard(item)
-          } else {
-            MediaPosterCard({ title: item.name, subtitle: item.subtitle(),
-              artworkUrl: this.itemImageUrl(item, 700),
-              cardWidth: ResponsiveSizeClassResolver.posterWidth(this.pageWidth),
-              sharedTransitionId: this.artworkSharedTransitionId(item),
-              onCardClick: () => this.openItem(item) })
-          }
+          MediaPosterCard({ title: item.name, subtitle: item.subtitle(),
+            artworkUrl: this.itemImageUrl(item, 700),
+            cardWidth: ResponsiveSizeClassResolver.posterWidth(this.pageWidth),
+            enableSharedTransition: true,
+            onCardClick: (transitionId: string) => { void this.openItem(item, false, transitionId,
+              this.itemImageUrl(item, 700)) } })
         }
       }, (item: EmbyItem) => 'poster_' + item.id)
     }
     .columnsTemplate(this.posterColumns())
+    .scrollBar(BarState.Off)
     .columnsGap(12)
     .rowsGap(18)
     .width('100%')
@@ -515,6 +541,11 @@ struct EmbyLibraryPage {
     const generation = ++this.loadGeneration
     this.loading = true
     this.errorText = ''
+    this.moreLoading = false
+    this.moreError = ''
+    this.hasMore = false
+    this.nextStartIndex = 0
+    this.totalItems = 0
     let hasCachedHome = false
     try {
       if (this.sourceId.length === 0) {
@@ -535,6 +566,7 @@ struct EmbyLibraryPage {
       }
       const registeredProvider = await ProviderRegistry.get(this.sourceId,
         this.getUIContext().getHostContext() as common.UIAbilityContext)
+      if (generation !== this.loadGeneration) return
       if (!(registeredProvider instanceof EmbyProvider)) {
         this.errorText = 'Emby 媒体源不可用或已停用'
         return
@@ -562,23 +594,11 @@ struct EmbyLibraryPage {
         this.loading = false
         void this.refreshHomeSections(this.provider, this.items, generation)
       } else {
-        if (this.latestOnly) {
-          this.items = await this.provider.getLatestItemsRaw(0)
-        } else if (this.resumeOnly) {
-          this.items = []
-          this.resumeItems = await this.provider.getResumeItemsRaw()
-        } else if (this.libraryRoot && this.folderBrowse) {
-          this.items = await this.provider.getFolderChildrenRaw(this.parentId)
-        } else if (this.libraryRoot) {
-          // Library entry pages should show media posters, not the server's
-          // physical folder tree. Nested item pages keep the old behavior.
-          this.items = await this.provider.getLibraryItemsRaw(this.parentId, 0, this.collectionType,
-            this.sortBy, this.sortBy === 'SortName' ? 'Ascending' : 'Descending')
-        } else {
-          this.items = await this.provider.getItemsRaw(this.parentId)
-        }
+        const page = await this.queryPage(0)
         if (generation !== this.loadGeneration) return
-        if (!this.resumeOnly) this.resumeItems = []
+        this.items = []
+        this.resumeItems = []
+        this.applyPage(page)
         this.latestItems = []
         this.homeSections = []
       }
@@ -607,7 +627,7 @@ struct EmbyLibraryPage {
       const item = await this.provider.getItemRaw(itemId)
       if (item !== null) await this.openItem(item)
     } catch (_) {
-      promptAction.showToast({ message: '无法播放该媒体' })
+      promptAction.showToast(buildDetailToastOptions('无法播放该媒体'))
     }
   }
 
@@ -866,10 +886,6 @@ struct EmbyLibraryPage {
     return this.provider === null ? '' : this.provider.imageUrlFor(item, maxWidth)
   }
 
-  private artworkSharedTransitionId(item: EmbyItem): string {
-    return 'emby_artwork_' + this.sourceId + '_' + item.id
-  }
-
   private heroImageUrl(item: EmbyItem, maxWidth: number = 1000): string {
     if (this.provider === null) return ''
     const backdrop = this.provider.backdropUrlFor(item, maxWidth)
@@ -879,19 +895,13 @@ struct EmbyLibraryPage {
     return this.itemImageUrl(item, maxWidth)
   }
 
-  private heroUsesPoster(item: EmbyItem): boolean {
-    if (this.provider === null) return false
-    if (this.provider.backdropUrlFor(item, 1000).length > 0) return false
-    if (this.provider.thumbnailUrlFor(item, 900).length > 0) return false
-    return this.itemImageUrl(item, 1000).length > 0
-  }
-
-  private async openItem(item: EmbyItem, libraryRoot: boolean = false): Promise<void> {
+  private async openItem(item: EmbyItem, libraryRoot: boolean = false,
+    artworkTransitionId: string = '', transitionArtworkUrl: string = ''): Promise<void> {
     if (this.shouldOpenDetail(item)) {
       if (this.sourceId.length === 0) throw new Error('Emby 媒体源未配置')
       await this.getUIContext().getRouter().pushUrl({
         url: 'pages/emby/EmbyDetailPage',
-        params: this.detailRouteParams(item)
+        params: buildEmbyDetailRouteParams(this.sourceId, item, artworkTransitionId, transitionArtworkUrl)
       })
       return
     }
@@ -919,20 +929,6 @@ struct EmbyLibraryPage {
       item.type === 'Movie' || item.type === 'Episode' || item.type === 'Video' || item.type === 'BoxSet'
   }
 
-  private detailRouteParams(item: EmbyItem): Record<string, Object> {
-    const params: Record<string, Object> = { 'sourceId': this.sourceId, 'itemId': item.id }
-    if (item.type === 'Season' && item.seriesId.length > 0) {
-      params['itemId'] = item.seriesId
-      params['initialSeasonId'] = item.id
-    } else if (item.type === 'Episode' && item.seriesId.length > 0) {
-      params['itemId'] = item.seriesId
-      params['initialSeasonId'] = item.seasonId.length > 0 ? item.seasonId : item.parentId
-      params['initialEpisodeId'] = item.id
-      params['initialEpisodeIndex'] = item.indexNumber
-    }
-    return params
-  }
-
   private shouldBrowseChildren(item: EmbyItem): boolean {
     return !this.shouldOpenDetail(item) && item.isFolder
   }
@@ -954,7 +950,7 @@ struct EmbyLibraryPage {
     try {
       await EmbyPlaybackLauncher.open(this.getUIContext(), this.sourceId, item, [item])
     } catch (_) {
-      promptAction.showToast({ message: '无法播放该媒体' })
+      promptAction.showToast(buildDetailToastOptions('无法播放该媒体'))
     }
   }
 
@@ -1013,6 +1009,44 @@ struct EmbyLibraryPage {
     })
   }
 
+  private async queryPage(startIndex: number): Promise<EmbyItemsPage> {
+    if (this.provider === null) throw new Error('Emby 服务不可用')
+    if (this.nextUpOnly) return this.provider.getNextUpPageRaw(startIndex, this.pageSize)
+    if (this.resumeOnly) return this.provider.getResumePageRaw(startIndex, this.pageSize)
+    const recursive = this.latestOnly || (this.libraryRoot && !this.folderBrowse)
+    const types = this.latestOnly ? 'Movie,Series,Episode,Video' :
+      recursive ? EmbyLibraryPresentation.itemTypes(this.collectionType) : ''
+    const sort = this.latestOnly ? 'DateCreated' : recursive ? this.sortBy : 'SortName'
+    return this.provider.getBrowsePageRaw(this.parentId, startIndex, this.pageSize, recursive,
+      types, sort, sort === 'SortName' ? 'Ascending' : 'Descending')
+  }
+
+  private applyPage(page: EmbyItemsPage): void {
+    const current = this.resumeOnly ? this.resumeItems : this.items
+    const result = current.slice()
+    page.items.forEach((item: EmbyItem) => {
+      if (!result.some((existing: EmbyItem) => existing.id === item.id)) result.push(item)
+    })
+    if (this.resumeOnly) this.resumeItems = result
+    else this.items = result
+    this.nextStartIndex = page.startIndex + page.items.length
+    this.totalItems = page.totalRecordCount
+    this.hasMore = page.items.length > 0 &&
+      (this.nextStartIndex < page.totalRecordCount || page.items.length === this.pageSize)
+  }
+
+  private async loadMore(): Promise<void> {
+    if (this.isHome() || this.loading || this.moreLoading || !this.hasMore || this.searchText.trim().length > 0) return
+    const generation = this.loadGeneration
+    this.moreLoading = true
+    this.moreError = ''
+    try {
+      const page = await this.queryPage(this.nextStartIndex)
+      if (generation === this.loadGeneration) this.applyPage(page)
+    } catch (_) { if (generation === this.loadGeneration) this.moreError = '加载失败' }
+    finally { if (generation === this.loadGeneration) this.moreLoading = false }
+  }
+
   private toggleSort(): void {
     if (!this.libraryRoot || this.folderBrowse) return
     this.sortBy = this.sortBy === 'SortName' ? 'DateCreated' : 'SortName'
@@ -1032,7 +1066,7 @@ struct EmbyLibraryPage {
     // A latest-only route also has no parentId, but it is a list page rather
     // than the home page. Keeping it out of the home branch prevents the
     // "全部" entry from rendering again and recursively navigating.
-    return this.parentId.length === 0 && !this.latestOnly && !this.resumeOnly
+    return this.parentId.length === 0 && !this.latestOnly && !this.resumeOnly && !this.nextUpOnly
   }
 
   private featuredItems(): EmbyItem[] {

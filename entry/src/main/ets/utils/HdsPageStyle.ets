@@ -5,7 +5,7 @@ import {
   SystemMaterialParams,
   hdsMaterial
 } from '@kit.UIDesignKit'
-import { LengthMetrics } from '@kit.ArkUI'
+import { LengthMetrics, uiMaterial } from '@kit.ArkUI'
 import { ResponsiveSizeClass, ResponsiveSizeClassResolver } from '../ui/theme/ResponsiveSizeClass'
 
 export const DEFAULT_TOP_SAFE_HEIGHT: number = 36
@@ -13,11 +13,18 @@ export const MINI_TITLE_BAR_CONTENT_HEIGHT: number = 72
 export const HDS_FLOATING_TAB_CONTENT_SPACER: number = 96
 export const TIMELINE_WEEKDAY_BAR_HEIGHT: number = 56
 export const PREFS_KEY_HDS_MATERIAL_LEVEL: string = 'hdsMaterialLevel'
+export const PREFS_KEY_IMMERSIVE_MATERIAL_STYLE: string = 'immersiveMaterialStyle'
 export const HDS_MATERIAL_LEVEL_EXQUISITE: string = 'exquisite'
 export const HDS_MATERIAL_LEVEL_GENTLE: string = 'gentle'
 export const HDS_MATERIAL_LEVEL_SMOOTH: string = 'smooth'
 export const HDS_MATERIAL_LEVEL_ADAPTIVE: string = 'adaptive'
 export const HDS_MATERIAL_LEVEL_DEFAULT: string = HDS_MATERIAL_LEVEL_EXQUISITE
+export const IMMERSIVE_STYLE_ULTRA_THIN: string = 'ultraThin'
+export const IMMERSIVE_STYLE_THIN: string = 'thin'
+export const IMMERSIVE_STYLE_REGULAR: string = 'regular'
+export const IMMERSIVE_STYLE_THICK: string = 'thick'
+export const IMMERSIVE_STYLE_ULTRA_THICK: string = 'ultraThick'
+export const IMMERSIVE_STYLE_DEFAULT: string = IMMERSIVE_STYLE_REGULAR
 
 export function getEffectiveTopSafeHeight(topSafeHeight: number): number {
   return topSafeHeight > 0 ? topSafeHeight : DEFAULT_TOP_SAFE_HEIGHT
@@ -82,6 +89,40 @@ export function getHdsMaterialLevelLabel(level: string): string {
     return '自适应'
   }
   return '精致'
+}
+
+export function getImmersiveMaterialStyleStorageValue(): string {
+  const style = AppStorage.get<string>(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE)
+  if (style === IMMERSIVE_STYLE_ULTRA_THIN || style === IMMERSIVE_STYLE_THIN ||
+    style === IMMERSIVE_STYLE_REGULAR || style === IMMERSIVE_STYLE_THICK ||
+    style === IMMERSIVE_STYLE_ULTRA_THICK) {
+    return style
+  }
+  return IMMERSIVE_STYLE_DEFAULT
+}
+
+export function resolveImmersiveMaterialStyle(style: string): uiMaterial.ImmersiveStyle {
+  if (style === IMMERSIVE_STYLE_ULTRA_THIN) return uiMaterial.ImmersiveStyle.ULTRA_THIN
+  if (style === IMMERSIVE_STYLE_THIN) return uiMaterial.ImmersiveStyle.THIN
+  if (style === IMMERSIVE_STYLE_THICK) return uiMaterial.ImmersiveStyle.THICK
+  if (style === IMMERSIVE_STYLE_ULTRA_THICK) return uiMaterial.ImmersiveStyle.ULTRA_THICK
+  return uiMaterial.ImmersiveStyle.REGULAR
+}
+
+export function resolveImmersiveBlurStyle(style: string): BlurStyle {
+  if (style === IMMERSIVE_STYLE_ULTRA_THIN) return BlurStyle.COMPONENT_ULTRA_THIN
+  if (style === IMMERSIVE_STYLE_THIN) return BlurStyle.COMPONENT_THIN
+  if (style === IMMERSIVE_STYLE_THICK) return BlurStyle.COMPONENT_THICK
+  if (style === IMMERSIVE_STYLE_ULTRA_THICK) return BlurStyle.COMPONENT_ULTRA_THICK
+  return BlurStyle.COMPONENT_REGULAR
+}
+
+export function getImmersiveMaterialStyleLabel(style: string): string {
+  if (style === IMMERSIVE_STYLE_ULTRA_THIN) return '超薄'
+  if (style === IMMERSIVE_STYLE_THIN) return '薄'
+  if (style === IMMERSIVE_STYLE_THICK) return '厚'
+  if (style === IMMERSIVE_STYLE_ULTRA_THICK) return '超厚'
+  return '常规'
 }
 
 export function buildImmersiveTitleBarStyle(level: string = getHdsMaterialLevelStorageValue()): TitleBarStyleOptions {
@@ -156,6 +197,43 @@ export function buildTitleBarOptions(title: string, level: string = getHdsMateri
     enableComponentSafeArea: false,
     avoidLayoutSafeArea: true
   }
+}
+
+/** Media artwork remains visible under the title bar until scrolling introduces the material layer. */
+export function buildMediaDetailTitleBarOptions(title: string,
+  level: string = getHdsMaterialLevelStorageValue()): HdsNavigationTitleBarOptions {
+  const options: HdsNavigationTitleBarOptions = buildTitleBarOptions(title, level)
+  if (options.style?.originalStyle?.backgroundStyle) {
+    options.style.originalStyle.backgroundStyle.blurRadius = 0
+  }
+  if (options.style?.originalStyle?.contentStyle?.menuStyle) {
+    options.style.originalStyle.contentStyle.menuStyle.backgroundColor = Color.Transparent
+  }
+  if (options.style?.originalStyle?.contentStyle?.backIconStyle) {
+    options.style.originalStyle.contentStyle.backIconStyle.backgroundColor = Color.Transparent
+  }
+  return options
+}
+
+/** 首页大图沉浸时使用：首屏标题栏透明并叠在 artwork 上，滚动后回到材料背景。 */
+export function buildHeroTitleBarStyle(level: string = getHdsMaterialLevelStorageValue()): TitleBarStyleOptions {
+  const base: TitleBarStyleOptions = buildImmersiveTitleBarStyle(level)
+  if (base.originalStyle?.backgroundStyle) {
+    base.originalStyle.backgroundStyle.blurRadius = 0
+  }
+  if (base.originalStyle?.contentStyle?.titleStyle) {
+    base.originalStyle.contentStyle.titleStyle.mainTitleColor = Color.White
+    base.originalStyle.contentStyle.titleStyle.subTitleColor = '#E6FFFFFF'
+  }
+  if (base.originalStyle?.contentStyle?.menuStyle) {
+    base.originalStyle.contentStyle.menuStyle.backgroundColor = '#66000000'
+    base.originalStyle.contentStyle.menuStyle.iconColor = Color.White
+  }
+  if (base.originalStyle?.contentStyle?.backIconStyle) {
+    base.originalStyle.contentStyle.backIconStyle.backgroundColor = '#66000000'
+    base.originalStyle.contentStyle.backIconStyle.iconColor = Color.White
+  }
+  return base
 }
 
 export function buildTimelineTitleBarStyle(level: string = getHdsMaterialLevelStorageValue()): TitleBarStyleOptions {

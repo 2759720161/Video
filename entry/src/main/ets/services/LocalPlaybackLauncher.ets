@@ -1,3 +1,4 @@
+import { buildDetailToastOptions } from '../utils/DetailMaterial'
 import { promptAction } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import { LocalVideoRecord } from '../models/LocalVideoRecord'
@@ -37,7 +38,7 @@ export class LocalPlaybackLauncher {
       await ProviderPlaybackLauncher.openWithProvider(uiContext, provider, current === null ? currentItem : current,
         items, fromBeginning, replace)
     } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : '无法打开视频' })
+      promptAction.showToast(buildDetailToastOptions(err instanceof Error ? err.message : '无法打开视频'))
     }
   }
 }

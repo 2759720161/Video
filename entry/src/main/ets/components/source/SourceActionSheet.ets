@@ -1,5 +1,5 @@
-import { promptAction } from '@kit.ArkUI'
-import { BusinessError } from '@kit.BasicServicesKit'
+import { buildDetailSheetMaterial } from '../../utils/DetailMaterial'
+import { IMMERSIVE_STYLE_DEFAULT, PREFS_KEY_IMMERSIVE_MATERIAL_STYLE } from '../../utils/HdsPageStyle'
 
 export enum SourceActionKind {
   EDIT = 'edit',
@@ -18,6 +18,8 @@ export struct SourceActionSheet {
   @Prop userToggleable: boolean = true
   @Prop userReorderable: boolean = true
   @Prop userRemovable: boolean = true
+  @StorageLink(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE) materialThickness: string = IMMERSIVE_STYLE_DEFAULT
+  @State private showMenu: boolean = false
   onAction?: (action: SourceActionKind) => void
 
   build() {
@@ -27,43 +29,36 @@ export struct SourceActionSheet {
       .width(44)
       .height(44)
       .hitTestBehavior(HitTestMode.Block)
-      .onClick(() => this.openActionMenu())
+      .onClick(() => { this.showMenu = !this.showMenu })
+      .bindMenu(this.showMenu, this.actionMenuItems(), this.actionMenuOptions())
   }
 
-  private openActionMenu(): void {
-    try {
-      const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?,
-        promptAction.Button?, promptAction.Button?] = [
-        { text: '测试连接', color: $r('app.color.text_primary') }
-      ]
-      const actions: SourceActionKind[] = [SourceActionKind.TEST]
-      if (this.showEdit) {
-        buttons.unshift({ text: '编辑', color: $r('app.color.text_primary') })
-        actions.unshift(SourceActionKind.EDIT)
-      }
-      if (this.userToggleable) {
-        buttons.push({ text: this.isEnabled ? '停用媒体源' : '启用媒体源', color: $r('app.color.text_primary') })
-        actions.push(SourceActionKind.TOGGLE)
-      }
-      if (this.userReorderable) {
-        buttons.push({ text: '调整顺序', color: $r('app.color.text_primary') })
-        actions.push(SourceActionKind.REORDER)
-      }
-      if (this.userRemovable) {
-        buttons.push({ text: '删除媒体源', color: $r('app.color.status_error') })
-        actions.push(SourceActionKind.DELETE)
-      }
-      this.getUIContext().getPromptAction().showActionMenu({
-        title: this.title,
-        buttons: buttons
-      }, (err: BusinessError, result: promptAction.ActionMenuSuccessResponse) => {
-        if (err !== undefined) return
-        if (result.index >= 0 && result.index < actions.length && this.onAction) {
-          this.onAction(actions[result.index])
-        }
-      })
-    } catch (_) {
-      // 操作菜单失败时不影响来源卡片本身的浏览入口。
+  private menuItem(value: string, action: SourceActionKind): MenuElement {
+    return { value: value, action: () => {
+      this.showMenu = false
+      if (this.onAction) this.onAction(action)
+    } }
+  }
+
+  private actionMenuItems(): MenuElement[] {
+    const items: MenuElement[] = []
+    if (this.showEdit) items.push(this.menuItem('编辑', SourceActionKind.EDIT))
+    items.push(this.menuItem('测试连接', SourceActionKind.TEST))
+    if (this.userToggleable) items.push(this.menuItem(this.isEnabled ? '停用媒体源' : '启用媒体源', SourceActionKind.TOGGLE))
+    if (this.userReorderable) items.push(this.menuItem('调整顺序', SourceActionKind.REORDER))
+    if (this.userRemovable) items.push(this.menuItem('删除媒体源', SourceActionKind.DELETE))
+    return items
+  }
+
+  private actionMenuOptions(): MenuOptions {
+    const material = buildDetailSheetMaterial(this.materialThickness)
+    const options: MenuOptions = {
+      placement: Placement.BottomRight,
+      borderRadius: 22,
+      backgroundColor: material === undefined ? $r('app.color.card_background') : Color.Transparent,
+      onDisappear: () => { this.showMenu = false }
     }
+    if (material !== undefined) options.systemMaterial = material
+    return options
   }
 }

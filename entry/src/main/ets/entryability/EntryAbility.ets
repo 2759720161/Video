@@ -7,10 +7,10 @@ import { PlaybackHistoryStore } from '../store/PlaybackHistoryStore'
 import { MediaSourceMigration } from '../store/MediaSourceMigration'
 import { SourceCredentialMigration } from '../services/security/SourceCredentialMigration'
 import { ProviderRegistry } from '../providers/base/ProviderRegistry'
+import { CatNodeRuntime } from '../providers/catvod/CatNodeRuntime'
 import { LocalProvider } from '../providers/local/LocalProvider'
 import { RdbManager } from '../store/RdbManager'
 import { FileStore } from '../store/FileStore'
-import { UserDownloadFolder } from '../services/UserDownloadFolder'
 import { PLAYER_AUTO_PIP_DEFAULT, PREFS_KEY_PLAYER_AUTO_PIP } from '../utils/PlayerAutoPiP'
 import { PLAYER_AUTO_NEXT_DEFAULT, PREFS_KEY_PLAYER_AUTO_NEXT } from '../utils/PlayerAutoNext'
 import {
@@ -38,7 +38,12 @@ import {
   SUBTITLE_OUTLINE_ENABLED_DEFAULT,
   SUBTITLE_TIME_OFFSET_MS_DEFAULT
 } from '../utils/SubtitlePreferences'
-import { HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../utils/HdsPageStyle'
+import {
+  HDS_MATERIAL_LEVEL_DEFAULT,
+  PREFS_KEY_HDS_MATERIAL_LEVEL,
+  IMMERSIVE_STYLE_DEFAULT,
+  PREFS_KEY_IMMERSIVE_MATERIAL_STYLE
+} from '../utils/HdsPageStyle'
 import {
   BOTTOM_TAB_ANIMATION_HIDDEN_KEY,
   BOTTOM_TAB_ANIMATION_TOKEN_KEY,
@@ -94,6 +99,7 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_OUTLINE_ENABLED, SUBTITLE_OUTLINE_ENABLED_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_SUBTITLE_TIME_OFFSET_MS, SUBTITLE_TIME_OFFSET_MS_DEFAULT)
     AppStorage.setOrCreate(PREFS_KEY_HDS_MATERIAL_LEVEL, HDS_MATERIAL_LEVEL_DEFAULT)
+    AppStorage.setOrCreate(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE, IMMERSIVE_STYLE_DEFAULT)
     this.systemMediaSession.initialize(this.context as common.UIAbilityContext)
 
     // The home library can start scanning as soon as the first page is shown.
@@ -151,6 +157,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    void CatNodeRuntime.shutdown().catch((error: Error) => console.warn('猫源退出失败：' + error.message))
     void this.systemMediaSession.destroy()
   }
 
@@ -207,6 +214,7 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate(BOTTOM_TAB_ANIMATION_TOKEN_KEY, 0)
       AppStorage.setOrCreate(BOTTOM_TAB_ANIMATION_HIDDEN_KEY, false)
       AppStorage.setOrCreate(PREFS_KEY_HDS_MATERIAL_LEVEL, await PreferencesStore.getInstance().getString(PREFS_KEY_HDS_MATERIAL_LEVEL, HDS_MATERIAL_LEVEL_DEFAULT))
+      AppStorage.setOrCreate(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE, await PreferencesStore.getInstance().getString(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE, IMMERSIVE_STYLE_DEFAULT))
     } catch (err) {
       logger.error('Initialize preferences failed: %{public}s', String(err))
     }
@@ -216,11 +224,6 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('appRdbReady', true)
     } catch (err) {
       logger.error('Initialize local history database failed: %{public}s', String(err))
-    }
-    try {
-      await UserDownloadFolder.ensureOwnFolder(this.context)
-    } catch (err) {
-      logger.warn('Initialize local file storage failed: %{public}s', String(err))
     }
   }
 }

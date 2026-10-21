@@ -48,7 +48,7 @@ export class M3u8ConverterService {
       throw new Error('未找到可转换的 m3u8 播放列表')
     }
 
-    const folderPath = await UserDownloadFolder.ensureOwnFolder(context)
+    const folderPath = UserDownloadFolder.getExistingOwnFolder()
     if (folderPath.length === 0) {
       throw new Error('应用专属目录暂不可访问')
     }

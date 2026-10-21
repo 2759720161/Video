@@ -1,4 +1,5 @@
-import { IPlayerEngine, PlaybackOptions, PlayerState, PlayerTrack, PlayerTrackType, VideoAspectMode, VideoMediaInfo } from './IPlayerEngine'
+import type { IPlayerEngine } from './IPlayerEngine'
+import { PlaybackOptions, PlayerState, PlayerTrack, PlayerTrackType, VideoAspectMode, VideoMediaInfo } from './IPlayerEngine'
 import { Logger } from '../../utils/Logger'
 import { fileIo } from '@kit.CoreFileKit'
 import mpvNapi from 'libmpv_napi.so'
@@ -707,15 +708,15 @@ export class MpvPlayerEngine implements IPlayerEngine {
     }
   }
 
-  async selectTrack(index: number): Promise<void> {
+  async selectTrack(index: number, type?: PlayerTrackType): Promise<void> {
     if (index < 0 || napi === null || this.ctxId < 0) {
       return
     }
-    const track = this.findKnownTrack(index)
+    const track = this.findKnownTrack(index, type)
     if (track === null) {
       await this.getTracks()
     }
-    const resolvedTrack = this.findKnownTrack(index)
+    const resolvedTrack = this.findKnownTrack(index, type)
     if (resolvedTrack === null) {
       throw new Error('未找到音轨或字幕轨')
     }
@@ -752,7 +753,7 @@ export class MpvPlayerEngine implements IPlayerEngine {
     if (napi === null || this.ctxId < 0) {
       return
     }
-    const track = this.findKnownTrack(index)
+    const track = this.findKnownTrack(index, PlayerTrackType.subtitle)
     if (track !== null && track.type !== PlayerTrackType.subtitle) {
       return
     }
@@ -825,9 +826,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
     return null
   }
 
-  private findKnownTrack(index: number): PlayerTrack | null {
+  private findKnownTrack(index: number, type?: PlayerTrackType): PlayerTrack | null {
     for (let i = 0; i < this.latestTracks.length; i++) {
-      if (this.latestTracks[i].index === index) {
+      if (this.latestTracks[i].index === index && (type === undefined || this.latestTracks[i].type === type)) {
         return this.latestTracks[i]
       }
     }

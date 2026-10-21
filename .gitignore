@@ -42,6 +42,11 @@
 
 # Third-party prebuilt dependencies and obsolete compatibility output
 /native/mpv/prebuilt/
+/native/node/dist/
+/native/node/download-cache/
+/native/node/source-download-cache/
+/native/node/vendor/
+/entry/libs/arm64-v8a/libnode.so.137
 /native/mpv/legacy/
 /native/mpv/ffmpeg-src/config.h
 /native/mpv/ffmpeg-src/config_components.h

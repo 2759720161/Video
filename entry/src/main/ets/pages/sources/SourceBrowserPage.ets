@@ -1,3 +1,4 @@
+import { buildDetailToastOptions } from '../../utils/DetailMaterial'
 import { promptAction } from '@kit.ArkUI'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
@@ -86,7 +87,7 @@ struct SourceBrowserPage {
                 ForEach(this.visibleItems(), (item: MediaItem) => {
                   GridItem() { this.GridItemCard(item) }
                 }, (item: MediaItem) => 'grid_' + item.sourceId + '_' + item.id)
-              }.columnsTemplate(this.gridColumns()).columnsGap(10).rowsGap(10).width('100%')
+              }.columnsTemplate(this.gridColumns()).columnsGap(10).rowsGap(10).width('100%').scrollBar(BarState.Off)
             } else {
               Column() {
                 ForEach(this.visibleItems(), (item: MediaItem) => { this.ItemCard(item) },
@@ -322,13 +323,13 @@ struct SourceBrowserPage {
         return
       }
       if (!item.playable) {
-        promptAction.showToast({ message: '该文件类型暂不支持播放' })
+        promptAction.showToast(buildDetailToastOptions('该文件类型暂不支持播放'))
         return
       }
       const playable = this.items.filter((value: MediaItem) => value.playable)
       await ProviderPlaybackLauncher.open(this.getUIContext(), item, playable)
     } catch (_) {
-      promptAction.showToast({ message: '无法播放该媒体' })
+      promptAction.showToast(buildDetailToastOptions('无法播放该媒体'))
     }
   }
 

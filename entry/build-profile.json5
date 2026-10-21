@@ -1,6 +1,12 @@
 {
   "apiType": "stageMode",
   "buildOption": {
+    "nativeLib": {
+      "debugSymbol": {
+        "strip": true,
+        "exclude": ["**/libnode.so.137"]
+      }
+    },
     "externalNativeOptions": {
       "path": "./src/main/cpp/CMakeLists.txt",
       "arguments": "",

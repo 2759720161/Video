@@ -24,6 +24,13 @@ export class MediaSourceStore {
     return MediaSourceStore.getAllInternal()
   }
 
+  static async getAllStrict(): Promise<MediaSourceInstance[]> {
+    await MediaSourceStore.mutationTail
+    const sources = await MediaSourceStore.getAllInternal()
+    MediaSourceStore.ensureLastReadSucceeded()
+    return sources
+  }
+
   private static async getAllInternal(): Promise<MediaSourceInstance[]> {
     let raw = '[]'
     MediaSourceStore.lastReadFailed = false
@@ -217,12 +224,15 @@ export class MediaSourceStore {
   }
 
   /** 保存 Emby 设置并返回对应 sourceId；按 serverId 或账号地址复用实例。 */
-  static async upsertEmby(config: EmbyServerConfig, preferredSourceId: string = ''): Promise<string> {
+  static async upsertEmby(config: EmbyServerConfig, preferredSourceId: string = '',
+    displayName: string | null = null): Promise<string> {
     const snapshot = config.copy()
-    return MediaSourceStore.enqueueMutation<string>(() => MediaSourceStore.upsertEmbyInternal(snapshot, preferredSourceId))
+    return MediaSourceStore.enqueueMutation<string>(() =>
+      MediaSourceStore.upsertEmbyInternal(snapshot, preferredSourceId, displayName))
   }
 
-  private static async upsertEmbyInternal(config: EmbyServerConfig, preferredSourceId: string = ''): Promise<string> {
+  private static async upsertEmbyInternal(config: EmbyServerConfig, preferredSourceId: string = '',
+    displayName: string | null = null): Promise<string> {
     const normalizedConfig = EmbySourceConfigCodec.decode(JSON.stringify(config))
     if (normalizedConfig === null) throw new Error('Invalid Emby configuration')
     const normalizedPreferredSourceId = MediaSourceStore.normalizeText(preferredSourceId)
@@ -256,7 +266,9 @@ export class MediaSourceStore {
       source.providerType = 'emby'
       source.sortOrder = 10 + sources.length
     }
-    source.name = normalizedConfig.serverName.length > 0 ? normalizedConfig.serverName : 'Emby'
+    const requestedName = displayName === null ? source.name : displayName.trim()
+    source.name = requestedName.length > 0 ? requestedName :
+      (normalizedConfig.serverName.length > 0 ? normalizedConfig.serverName : 'Emby')
     source.enabled = true
     source.configJson = EmbySourceConfigCodec.encode(normalizedConfig)
     const credential = new SourceCredential()

@@ -36,7 +36,7 @@ export interface IPlayerEngine {
   setAspectMode(mode: VideoAspectMode): void
   getVideoInfo(): Promise<VideoMediaInfo>
   getTracks(): Promise<PlayerTrack[]>
-  selectTrack(index: number): Promise<void>
+  selectTrack(index: number, type?: PlayerTrackType): Promise<void>
   setSecondarySubtitle(index: number): Promise<void>
   setSubtitleDelay(offsetMs: number): Promise<void>
   deselectTrack(index: number): Promise<void>

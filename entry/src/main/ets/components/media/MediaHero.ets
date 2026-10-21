@@ -16,39 +16,26 @@ export struct MediaHero {
   @Prop heightVp: number = AppDimensions.HERO_PHONE_HEIGHT
   @Prop widthVp: number = 0
   @Prop actionText: string = '继续播放'
-  @Prop usePosterFallback: boolean = false
+  @Prop actionEnabled: boolean = true
+  @Prop secondaryActionText: string = ''
   @State private artworkLoaded: boolean = false
   onPlay?: () => void
+  onSecondaryAction?: () => void
 
   build() {
     Stack({ alignContent: Alignment.BottomStart }) {
-      if (this.usePosterFallback && this.artworkUrl.length > 0) {
-        Image(this.artworkUrl)
-          .width('100%').height(this.resolvedHeight()).objectFit(ImageFit.Cover)
-          .blur(18).opacity(this.artworkLoaded ? 0.42 : 0).draggable(false)
-          .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
-          .onComplete(() => this.artworkLoaded = true)
-          .onError(() => this.artworkLoaded = true)
-        Image(this.artworkUrl)
-          .width('100%').height(this.resolvedHeight()).objectFit(ImageFit.Contain).draggable(false)
-          .opacity(this.artworkLoaded ? 1 : 0)
-          .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
-          .onComplete(() => this.artworkLoaded = true)
-          .onError(() => this.artworkLoaded = true)
-      } else {
-        Image(this.artworkUrl.length > 0 ? this.artworkUrl : $r('app.media.ic_placeholder'))
-          .width('100%').height(this.resolvedHeight()).objectFit(ImageFit.Cover)
-          .opacity(this.artworkUrl.length > 0 ? (this.artworkLoaded ? 1 : 0) : 0.78)
-          .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
-          .onComplete(() => this.artworkLoaded = true)
-          .onError(() => this.artworkLoaded = true)
-      }
+      Image(this.artworkUrl.length > 0 ? this.artworkUrl : $r('app.media.ic_placeholder'))
+        .width('100%').height(this.resolvedHeight()).objectFit(ImageFit.Cover).draggable(false)
+        .opacity(this.artworkUrl.length > 0 ? (this.artworkLoaded ? 1 : 0) : 0.78)
+        .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
+        .onComplete(() => this.artworkLoaded = true)
+        .onError(() => this.artworkLoaded = true)
       Column({ space: AppSpacing.SM }) {
         Text(this.title)
           .fontSize(AppTypography.HERO_TITLE)
           .fontWeight(FontWeight.Bold)
           .fontColor(Color.White)
-          .maxLines(1)
+          .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
         Text(this.subtitle)
@@ -58,15 +45,23 @@ export struct MediaHero {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
         MediaProgressBar({ positionMs: this.positionMs, durationMs: this.durationMs })
-        Button(this.actionText)
+        Row({ space: 12 }) {
+          Button(this.actionText)
           .height(44)
           .fontSize(AppTypography.BODY_LARGE)
           .fontColor($r('app.color.text_on_primary'))
           .backgroundColor($r('app.color.accent_blue'))
           .borderRadius(AppRadius.BUTTON)
+          .enabled(this.actionEnabled)
           .onClick(() => {
             if (this.onPlay) this.onPlay()
           })
+          if (this.secondaryActionText.length > 0) {
+            Button(this.secondaryActionText).height(44).fontSize(AppTypography.BODY)
+              .fontColor(Color.White).backgroundColor('#44000000')
+              .onClick(() => { if (this.onSecondaryAction) this.onSecondaryAction() })
+          }
+        }
       }
       .width('100%')
       .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.LG, bottom: AppSpacing.MD })

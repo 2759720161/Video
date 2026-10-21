@@ -72,6 +72,33 @@ export class ProviderCatalog {
     webdav.browserRoute = 'pages/sources/SourceBrowserPage'
     webdav.capabilities = [ProviderCapability.HOME, ProviderCapability.BROWSE, ProviderCapability.RESUME]
     ProviderCatalog.register(webdav)
+    const catvod = new ProviderDescriptor()
+    catvod.type = 'catvod'
+    catvod.displayName = '猫源'
+    catvod.category = '影视来源'
+    catvod.description = '浏览分类、搜索作品，选择线路与分集播放。'
+    catvod.shortDescription = '天堂采集及兼容来源'
+    catvod.featureSummary = '分类、搜索、选集与继续观看'
+    catvod.brandKind = 'catvod'
+    catvod.addRoute = 'pages/catvod/CatVodSourceEditPage'
+    catvod.editRoute = catvod.addRoute
+    catvod.browserRoute = 'pages/catvod/CatVodBrowserPage'
+    catvod.capabilities = [ProviderCapability.HOME, ProviderCapability.BROWSE, ProviderCapability.SEARCH,
+      ProviderCapability.DETAIL, ProviderCapability.RESUME, ProviderCapability.VARIANT, ProviderCapability.ARTWORK]
+    ProviderCatalog.register(catvod)
+    const catnode = new ProviderDescriptor()
+    catnode.type = 'catnode'
+    catnode.displayName = 'Cat 订阅'
+    catnode.category = '影视来源'
+    catnode.description = '通过 index.js.md5 地址添加订阅，浏览分类、搜索作品并播放。'
+    catnode.shortDescription = '通过地址添加订阅'
+    catnode.featureSummary = '分类、搜索、选集与来源播放解析'
+    catnode.brandKind = 'catvod'
+    catnode.addRoute = 'pages/catvod/CatNodeSourceEditPage'
+    catnode.editRoute = catnode.addRoute
+    catnode.browserRoute = 'pages/catvod/CatVodBrowserPage'
+    catnode.capabilities = catvod.capabilities.slice()
+    ProviderCatalog.register(catnode)
     const jellyfin = new ProviderDescriptor()
     jellyfin.type = 'jellyfin'
     jellyfin.displayName = 'Jellyfin'

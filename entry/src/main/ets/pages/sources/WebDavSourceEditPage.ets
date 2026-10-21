@@ -1,3 +1,4 @@
+import { buildDetailToastOptions } from '../../utils/DetailMaterial'
 import { promptAction } from '@kit.ArkUI'
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit'
 import { MediaSourceInstance, createMediaSourceId } from '../../core/media/MediaSourceInstance'
@@ -82,7 +83,7 @@ struct WebDavSourceEditPage {
 
   private async save(): Promise<void> {
     if (this.baseUrl.trim().length === 0) {
-      promptAction.showToast({ message: '请输入 WebDAV 服务器地址' })
+      promptAction.showToast(buildDetailToastOptions('请输入 WebDAV 服务器地址'))
       return
     }
     ++this.loadGeneration
@@ -124,10 +125,10 @@ struct WebDavSourceEditPage {
       await SecureCredentialStore.getInstance().set(credential)
       if (normalizedSourceId.length > 0) await MediaSourceStore.update(source)
       else await MediaSourceStore.add(source)
-      promptAction.showToast({ message: 'WebDAV 已保存' })
+      promptAction.showToast(buildDetailToastOptions('WebDAV 已保存'))
       await this.getUIContext().getRouter().back()
     } catch (err) {
-      promptAction.showToast({ message: err instanceof Error ? err.message : 'WebDAV 连接失败' })
+      promptAction.showToast(buildDetailToastOptions(err instanceof Error ? err.message : 'WebDAV 连接失败'))
     } finally { this.saving = false }
   }
 }

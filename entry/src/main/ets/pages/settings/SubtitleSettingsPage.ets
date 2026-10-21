@@ -17,7 +17,9 @@ import {
   normalizeSubtitleFontSize,
   normalizeSubtitleTimeOffsetMs
 } from '../../utils/SubtitlePreferences'
-import { getBottomSpacerHeight, getTopSpacerHeight, buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { getBottomSpacerHeight, getTopSpacerHeight, buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT,
+  IMMERSIVE_STYLE_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL, PREFS_KEY_IMMERSIVE_MATERIAL_STYLE } from '../../utils/HdsPageStyle'
+import { DetailSelectMaterialModifier } from '../../utils/DetailMaterial'
 
 const MAX_RECENT_COLORS: number = 10
 
@@ -34,6 +36,7 @@ struct SubtitleSettingsPage {
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
+  @StorageLink(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE) materialThickness: string = IMMERSIVE_STYLE_DEFAULT
   @State colorHue: number = 0
   @State colorSaturation: number = 0
   @State colorValue: number = 1
@@ -380,6 +383,7 @@ struct SubtitleSettingsPage {
           .selected(this.timeOffsetIndex())
           .value(this.timeOffsetLabel())
           .font({ size: 14, weight: FontWeight.Medium })
+          .attributeModifier(new DetailSelectMaterialModifier(this.materialThickness))
           .onSelect((index: number) => {
             this.setTimeOffset([-1000, -500, 0, 500, 1000][index])
           })

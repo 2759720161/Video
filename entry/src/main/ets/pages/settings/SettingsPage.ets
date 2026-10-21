@@ -1,3 +1,4 @@
+import { buildDetailToastOptions } from '../../utils/DetailMaterial'
 import { promptAction, router } from '@kit.ArkUI'
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit'
 import { commentManager } from '@kit.AppGalleryKit'
@@ -126,7 +127,7 @@ export struct SettingsPage {
     try {
       await commentManager.showCommentDialog(getContext(this) as common.UIAbilityContext)
     } catch (_) {
-      promptAction.showToast({ message: '当前设备未提供应用市场评分服务' })
+      promptAction.showToast(buildDetailToastOptions('当前设备未提供应用市场评分服务'))
     }
   }
 }

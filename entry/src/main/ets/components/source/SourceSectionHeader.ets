@@ -17,7 +17,10 @@ export struct SourceSectionHeader {
       if (this.count > 0) {
         Text(String(this.count))
           .fontSize(AppTypography.CAPTION)
-          .fontColor($r('app.color.text_hint'))
+          .fontColor($r('app.color.text_secondary'))
+          .backgroundColor($r('app.color.button_ghost_bg'))
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .borderRadius(10)
       }
     }
     .width('100%')

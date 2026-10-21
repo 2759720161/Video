@@ -1,6 +1,70 @@
 {
   "string": [
     {
+      "name": "catvod_source_intro",
+      "value": "从天堂采集开始，浏览分类、搜索作品并选择分集。也可填写兼容的采集来源地址。"
+    },
+    {
+      "name": "catvod_source_name",
+      "value": "名称"
+    },
+    {
+      "name": "catvod_source_name_hint",
+      "value": "例如天堂采集"
+    },
+    {
+      "name": "catvod_source_address",
+      "value": "来源地址"
+    },
+    {
+      "name": "catvod_source_address_hint",
+      "value": "http:// 或 https:// 开头的采集地址"
+    },
+    {
+      "name": "catvod_referer",
+      "value": "来源页（播放需要时填写）"
+    },
+    {
+      "name": "catvod_optional",
+      "value": "可选"
+    },
+    {
+      "name": "catvod_saving",
+      "value": "保存中…"
+    },
+    {
+      "name": "catvod_test_save",
+      "value": "测试并保存"
+    },
+    {
+      "name": "catvod_search_hint",
+      "value": "搜索电影、剧集"
+    },
+    {
+      "name": "catvod_continue",
+      "value": "继续观看"
+    },
+    {
+      "name": "catvod_no_results",
+      "value": "没有找到相关作品"
+    },
+    {
+      "name": "catvod_loading_more",
+      "value": "加载中…"
+    },
+    {
+      "name": "catvod_load_more",
+      "value": "加载更多"
+    },
+    {
+      "name": "catvod_episodes",
+      "value": "线路与分集"
+    },
+    {
+      "name": "catvod_no_playable",
+      "value": "该作品暂时没有可直接播放的分集"
+    },
+    {
       "name": "module_desc",
       "value": "高性能本地媒体播放器"
     },
@@ -11,6 +75,182 @@
     {
       "name": "EntryAbility_label",
       "value": "影匣"
+    },
+    {
+      "name": "catnode_intro",
+      "value": "通过 index.js.md5 地址添加订阅，浏览分类、搜索作品并播放。"
+    },
+    {
+      "name": "catnode_select",
+      "value": "选择来源"
+    },
+    {
+      "name": "cat_subscription_add",
+      "value": "添加 Cat订阅"
+    },
+    {
+      "name": "cat_subscription_edit",
+      "value": "编辑 Cat订阅"
+    },
+    {
+      "name": "cat_subscription_save",
+      "value": "保存"
+    },
+    {
+      "name": "cat_subscription_saving",
+      "value": "正在保存"
+    },
+    {
+      "name": "cat_subscription_name",
+      "value": "名称"
+    },
+    {
+      "name": "cat_subscription_optional",
+      "value": "（可选）"
+    },
+    {
+      "name": "cat_subscription_name_hint",
+      "value": "为 Cat订阅 起个名字"
+    },
+    {
+      "name": "cat_subscription_address",
+      "value": "index.js.md5 地址 "
+    },
+    {
+      "name": "cat_subscription_address_hint",
+      "value": "https://example.com/cat/index.js.md5"
+    },
+    {
+      "name": "cat_subscription_preparing",
+      "value": "正在下载并校验订阅，首次启动较慢，请耐心等待。"
+    },
+    {
+      "name": "cat_subscription_notice",
+      "value": "保存前将下载并校验订阅，启动 Cat订阅 核心组件。首次启动较慢，请耐心等待。"
+    },
+    {
+      "name": "cat_subscription_icon",
+      "value": "服务器图标"
+    },
+    {
+      "name": "cat_subscription_icon_choose",
+      "value": "选择服务器图标"
+    },
+    {
+      "name": "cat_subscription_icon_selected",
+      "value": "已选择"
+    },
+    {
+      "name": "cat_subscription_icon_default",
+      "value": "默认"
+    },
+    {
+      "name": "cat_subscription_icon_reset",
+      "value": "恢复默认图标"
+    },
+    {
+      "name": "cat_home_find_source",
+      "value": "搜索来源名称"
+    },
+    {
+      "name": "cat_home_no_source",
+      "value": "没有找到匹配的来源"
+    },
+    {
+      "name": "cat_home_current",
+      "value": "，当前来源"
+    },
+    {
+      "name": "cat_home_read_failed",
+      "value": "读取来源失败，请稍后重试"
+    },
+    {
+      "name": "cat_home_switch_failed",
+      "value": "切换来源失败，请重试"
+    },
+    {
+      "name": "cat_home_recommended",
+      "value": "推荐"
+    },
+    {
+      "name": "cat_home_all",
+      "value": "全部作品"
+    },
+    {
+      "name": "cat_home_unavailable",
+      "value": "来源暂不可用"
+    },
+    {
+      "name": "cat_home_search_empty",
+      "value": "试试其他关键词，或切换来源搜索"
+    },
+    {
+      "name": "cat_home_browse_empty",
+      "value": "试试其他分类，或切换来源浏览"
+    },
+    {
+      "name": "cat_home_choose_source",
+      "value": "切换来源"
+    },
+    {
+      "name": "cat_home_discover",
+      "value": "发现想看的作品"
+    },
+    {
+      "name": "cat_home_switch",
+      "value": "切换"
+    },
+    {
+      "name": "cat_home_search_results",
+      "value": "搜索结果"
+    },
+    {
+      "name": "cat_home_clear_search",
+      "value": "清除搜索"
+    },
+    {
+      "name": "cat_home_loading",
+      "value": "正在读取作品"
+    },
+    {
+      "name": "cat_home_retry",
+      "value": "重新加载"
+    },
+    {
+      "name": "cat_home_end",
+      "value": "已显示全部内容"
+    },
+    {
+      "name": "cat_subscription_stopping",
+      "value": "正在准备下载…"
+    },
+    {
+      "name": "cat_subscription_checking",
+      "value": "正在检查订阅版本…"
+    },
+    {
+      "name": "cat_subscription_downloading",
+      "value": "正在下载猫源脚本…"
+    },
+    {
+      "name": "cat_subscription_verifying",
+      "value": "正在校验猫源脚本…"
+    },
+    {
+      "name": "cat_subscription_starting",
+      "value": "正在启动订阅核心…"
+    },
+    {
+      "name": "cat_subscription_reading",
+      "value": "正在读取来源列表…"
+    },
+    {
+      "name": "cat_subscription_download_save",
+      "value": "下载并保存"
+    },
+    {
+      "name": "cat_subscription_save_failed",
+      "value": "订阅保存失败，请重试"
     }
   ]
 }

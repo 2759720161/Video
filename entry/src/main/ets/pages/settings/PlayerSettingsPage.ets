@@ -16,7 +16,9 @@ import {
   normalizePlayerSpeed,
   normalizeSeekSeconds
 } from '../../utils/PlayerPlaybackPreferences'
-import { getBottomSpacerHeight, getTopSpacerHeight, buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL } from '../../utils/HdsPageStyle'
+import { getBottomSpacerHeight, getTopSpacerHeight, buildTitleBarOptions, HDS_MATERIAL_LEVEL_DEFAULT,
+  IMMERSIVE_STYLE_DEFAULT, PREFS_KEY_HDS_MATERIAL_LEVEL, PREFS_KEY_IMMERSIVE_MATERIAL_STYLE } from '../../utils/HdsPageStyle'
+import { DetailSelectMaterialModifier } from '../../utils/DetailMaterial'
 import {
   EMBY_PLAYBACK_MODE_DEFAULT,
   EmbyPlaybackMode,
@@ -35,6 +37,7 @@ struct PlayerSettingsPage {
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
+  @StorageLink(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE) materialThickness: string = IMMERSIVE_STYLE_DEFAULT
   private scroller: Scroller = new Scroller()
 
   build() {
@@ -92,7 +95,8 @@ struct PlayerSettingsPage {
       Column() {
         Text(title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      Select(options).selected(index).value(selected).font({ size: 14, weight: FontWeight.Medium }).onSelect(onSelect)
+      Select(options).selected(index).value(selected).font({ size: 14, weight: FontWeight.Medium })
+        .attributeModifier(new DetailSelectMaterialModifier(this.materialThickness)).onSelect(onSelect)
     }.width('100%').height(56).padding({ left: 16, right: 16 })
   }
 
@@ -118,6 +122,7 @@ struct PlayerSettingsPage {
         .selected(this.embyPlaybackModeIndex())
         .value(this.embyPlaybackModeLabel())
         .font({ size: 14, weight: FontWeight.Medium })
+        .attributeModifier(new DetailSelectMaterialModifier(this.materialThickness))
         .onSelect((index: number) => this.setEmbyPlaybackMode(index))
     }.width('100%').height(72).padding({ left: 16, right: 16 })
   }
@@ -142,6 +147,7 @@ struct PlayerSettingsPage {
         .selected(this.openOrientationIndex())
         .value(this.openOrientationLabel())
         .font({ size: 14, weight: FontWeight.Medium })
+        .attributeModifier(new DetailSelectMaterialModifier(this.materialThickness))
         .onSelect((index: number) => this.setOpenOrientation(index))
     }
     .width('100%')

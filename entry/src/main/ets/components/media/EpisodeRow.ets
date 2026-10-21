@@ -14,7 +14,6 @@ export struct EpisodeRow {
   @Prop played: boolean = false
   @Prop isResumeTarget: boolean = false
   @Prop showDivider: boolean = true
-  @Prop hideSpoiler: boolean = false
   @Prop playbackEnabled: boolean = true
   @State private isPressed: boolean = false
   @State private artworkLoaded: boolean = false
@@ -26,7 +25,6 @@ export struct EpisodeRow {
       Stack({ alignContent: Alignment.Center }) {
         Image(this.artworkUrl.length > 0 && !this.artworkFailed ? this.artworkUrl : $r('app.media.ic_placeholder'))
           .width(88).height(50).objectFit(ImageFit.Cover)
-          .blur(this.hideSpoiler ? 18 : 0)
           .accessibilityLevel('no')
           .borderRadius(AppRadius.SMALL_BUTTON)
           .opacity(this.artworkUrl.length > 0 ? (this.artworkLoaded ? 1 : 0) : 0.68)
@@ -41,7 +39,7 @@ export struct EpisodeRow {
         }
       }.width(88).height(50)
       Column({ space: AppSpacing.XS }) {
-        Text(this.hideSpoiler ? '第 ' + this.indexLabel + ' 集' : this.indexLabel + ' · ' + this.title)
+        Text(this.indexLabel + ' · ' + this.title)
           .fontSize(AppTypography.BODY_LARGE)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.isResumeTarget ? $r('app.color.accent_blue') : $r('app.color.text_primary'))
@@ -63,7 +61,7 @@ export struct EpisodeRow {
     .padding({ top: 12, bottom: 12 }).backgroundColor(Color.Transparent)
     .border({ width: { bottom: this.showDivider ? 0.5 : 0 }, color: $r('app.color.divider_color') })
     .enabled(this.playbackEnabled).accessibilityGroup(true)
-    .accessibilityText('第 ' + this.indexLabel + ' 集，' + (this.hideSpoiler ? '' : this.title + '，') + this.meta)
+    .accessibilityText('第 ' + this.indexLabel + ' 集，' + this.title + '，' + this.meta)
     .scale({ x: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.NAVIGATION_PRESS_SCALE : 1 })
     .opacity(this.isPressed ? 0.84 : 1)
     .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })

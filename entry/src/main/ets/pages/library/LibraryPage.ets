@@ -11,8 +11,6 @@ import { LocalVideoThumbnailStore } from '../../services/LocalVideoThumbnailStor
 import { LocalVideoRecord } from '../../models/LocalVideoRecord'
 import { LocalPlaybackLauncher } from '../../services/LocalPlaybackLauncher'
 import { LocalVideoHistoryStore } from '../../store/LocalVideoHistoryStore'
-import { PlaybackHistoryStore } from '../../store/PlaybackHistoryStore'
-import { PlaybackHistoryRecord } from '../../models/PlaybackHistoryRecord'
 import { PlaybackHistoryViewItem } from '../../models/PlaybackHistoryViewItem'
 import { PlaybackHistoryRepository } from '../../services/PlaybackHistoryRepository'
 import { LOCAL_VIDEO_HISTORY_VERSION_KEY } from '../../store/LocalVideoHistoryChangeSignal'
@@ -35,17 +33,8 @@ import {
 } from '../../utils/BottomTabAutoHide'
 import { HIDE_MEDIA_CARDS_DEFAULT, PREFS_KEY_HIDE_CONTINUE_WATCHING, PREFS_KEY_HIDE_LOCAL_MEDIA } from '../../utils/MediaVisibilityPreferences'
 import { PreferencesStore } from '../../store/PreferencesStore'
-import { MediaSourceStore, MEDIA_SOURCE_VERSION_KEY } from '../../store/MediaSourceStore'
-import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
 import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLauncher'
-import { ProviderRegistry } from '../../providers/base/ProviderRegistry'
 import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
-import { ProviderCatalog } from '../../providers/base/ProviderCatalog'
-import { MediaItem } from '../../core/media/MediaItem'
-import { MediaItemType } from '../../core/media/MediaItem'
-import { ProviderCapability } from '../../core/media/ProviderCapabilities'
-import { ProviderHomeSnapshot } from '../../models/ProviderHomeSnapshot'
-import { LibraryHomeCoordinator } from '../../services/library/LibraryHomeCoordinator'
 import { getMediaContentMaxWidth } from '../../utils/HdsPageStyle'
 import { AppSpacing } from '../../ui/theme/AppSpacing'
 import { AppDimensions } from '../../ui/theme/AppDimensions'
@@ -55,9 +44,7 @@ import { EmptyLibraryHero } from '../../components/media/EmptyLibraryHero'
 import { ContinueWatchingCard as V2ContinueWatchingCard } from '../../components/media/ContinueWatchingCard'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
 import { MediaShortcutTile } from '../../components/navigation/MediaShortcutTile'
-import { MediaSourceShortcutCard } from '../../components/source/MediaSourceShortcutCard'
 import { MediaLandscapeCard } from '../../components/media/MediaLandscapeCard'
-import { MediaPosterCard } from '../../components/media/MediaPosterCard'
 
 const logger = new Logger('LibraryPage')
 const HOME_HISTORY_LIMIT = 6
@@ -65,6 +52,8 @@ const HOME_HISTORY_LIMIT = 6
 @Entry
 @Component
 export struct LibraryPage {
+  @Prop embedded: boolean = false
+  @Prop @Watch('onActiveChanged') refreshToken: number = 0
   // 独立路由实例默认可用；首页嵌入时由 Index 显式传入当前 Tab 状态。
   @Prop @Watch('onActiveChanged') isActive: boolean = true
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
@@ -79,7 +68,6 @@ export struct LibraryPage {
   @StorageLink('screenWidthVp') screenWidthVp: number = 360
   @StorageLink(PREFS_KEY_HIDE_LOCAL_MEDIA) hideLocalMedia: boolean = HIDE_MEDIA_CARDS_DEFAULT
   @StorageLink(PREFS_KEY_HIDE_CONTINUE_WATCHING) hideContinueWatching: boolean = HIDE_MEDIA_CARDS_DEFAULT
-  @StorageLink(MEDIA_SOURCE_VERSION_KEY) @Watch('onMediaSourceChanged') mediaSourceVersion: number = 0
   @StorageLink(PLAYBACK_HISTORY_VERSION_KEY) @Watch('onPlaybackHistoryChanged') playbackHistoryVersion: number = 0
   @State localHistory: LocalVideoRecord[] = []
   @State continueWatching: PlaybackHistoryViewItem[] = []
@@ -90,18 +78,13 @@ export struct LibraryPage {
   @State ownFolderScanned: boolean = false
   @State ownFolderScanning: boolean = false
   @State ownFolderScanFailed: boolean = false
-  @State private mediaSources: MediaSourceInstance[] = []
-  @State private homeSnapshots: ProviderHomeSnapshot[] = []
-  private scroller: Scroller = new Scroller()
+  scroller: Scroller = new Scroller()
   private historyStore: LocalVideoHistoryStore = new LocalVideoHistoryStore()
-  private unifiedHistoryStore: PlaybackHistoryStore = new PlaybackHistoryStore()
   private historyRepository: PlaybackHistoryRepository = new PlaybackHistoryRepository()
-  private homeCoordinator: LibraryHomeCoordinator = new LibraryHomeCoordinator()
   private reloadGeneration: number = 0
+  private disposed: boolean = false
   private reloadInFlight: boolean = false
   private reloadAgain: boolean = false
-  private homeSnapshotInFlight: boolean = false
-  private homeSnapshotAgain: boolean = false
   private hasScannedOwnFolder: boolean = false
   private isGeneratingCovers: boolean = false
   private pendingHistoryCoverGeneration: boolean = false
@@ -111,6 +94,7 @@ export struct LibraryPage {
   private rootCoverGenerationToken: number = 0
 
   aboutToAppear(): void {
+    this.disposed = false
     this.reloadPageData()
   }
 
@@ -123,6 +107,9 @@ export struct LibraryPage {
   }
 
   aboutToDisappear(): void {
+    this.disposed = true
+    this.reloadGeneration++
+    this.reloadAgain = false
     this.cancelBackgroundCoverWork()
   }
 
@@ -144,10 +131,6 @@ export struct LibraryPage {
     }
   }
 
-  onMediaSourceChanged(): void {
-    if (this.isActive) void this.reloadPageData()
-  }
-
   onPlaybackHistoryChanged(): void {
     if (this.appRdbReady && this.isActive) void this.reloadPageData()
   }
@@ -167,8 +150,17 @@ export struct LibraryPage {
   }
 
   build() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      HdsNavigation() {
+    Column() {
+    if (this.embedded) {
+      this.LocalContent()
+    } else {
+      this.StandaloneContent()
+    }
+    }.width('100%').height('100%')
+  }
+
+  @Builder
+  private LocalContent(): void {
         Scroll(this.scroller) {
           Column({ space: 0 }) {
             Blank()
@@ -197,6 +189,13 @@ export struct LibraryPage {
           this.updateBottomTabOffset(yOffset)
         })
         .onScrollStop(() => this.snapBottomTabOffset())
+  }
+
+  @Builder
+  private StandaloneContent(): void {
+    Stack({ alignContent: Alignment.TopStart }) {
+      HdsNavigation() {
+        this.LocalContent()
       }
       .width('100%')
       .height('100%')
@@ -229,7 +228,7 @@ export struct LibraryPage {
       }
       this.QuickAccessSectionV2()
       this.LocalMediaSectionV2()
-      this.RemoteHomeSectionV2()
+
     }
     .width('100%')
     .constraintSize({ maxWidth: getMediaContentMaxWidth(this.screenWidthVp) || '100%' })
@@ -308,21 +307,6 @@ export struct LibraryPage {
             tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.screenWidthVp),
             tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.screenWidthVp),
             onClickAction: () => this.openFolderPage() })
-          ForEach(this.quickAccessSources(), (source: MediaSourceInstance) => {
-            MediaSourceShortcutCard({
-              title: source.name,
-              providerType: source.providerType,
-              statusText: this.sourceStatus(source),
-              isEnabled: source.enabled || source.providerType === 'local',
-              tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.screenWidthVp),
-              tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.screenWidthVp),
-              onCardClick: () => this.openSource(source)
-            })
-          }, (source: MediaSourceInstance) => 'home_quick_source_' + source.id)
-          MediaShortcutTile({ title: '添加媒体源', subtitle: 'Emby / WebDAV', iconKind: 'plus',
-            tileWidth: ResponsiveSizeClassResolver.shortcutWidth(this.screenWidthVp),
-            tileHeight: ResponsiveSizeClassResolver.shortcutHeight(this.screenWidthVp),
-            onClickAction: () => router.pushUrl({ url: 'pages/sources/AddSourcePage' }) })
         }
         .padding({ right: 24 })
       }
@@ -333,77 +317,6 @@ export struct LibraryPage {
     }
     .width('100%')
     .margin({ top: AppSpacing.SECTION_COMPACT })
-  }
-
-  @Builder
-  private RemoteHomeSectionV2(): void {
-    if (this.homeSnapshots.length > 0) {
-      Column({ space: 14 }) {
-        ForEach(this.homeSnapshots, (snapshot: ProviderHomeSnapshot) => {
-          ForEach(snapshot.sections, (section: import('../../core/media/MediaSection').MediaSection) => {
-            Column({ space: 8 }) {
-              MediaSectionHeader({
-                title: snapshot.sourceName.length > 0 ? snapshot.sourceName + ' · ' + section.title : section.title,
-                actionText: '浏览',
-                onAction: () => this.openHomeSection(snapshot.sourceId, section.id, section.title)
-              })
-              Scroll() {
-                Row({ space: 10 }) {
-                  ForEach(section.items.slice(0, 8), (item: MediaItem) => {
-                    this.RemoteHomeItem(item)
-                  }, (item: MediaItem) => 'home_remote_' + item.sourceId + '_' + item.id)
-                }.padding({ right: 24 })
-              }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
-                .width('calc(100% + 16vp)').margin({ right: -16 })
-            }.width('100%')
-          }, (section: import('../../core/media/MediaSection').MediaSection) =>
-            'home_remote_section_' + snapshot.sourceId + '_' + section.id)
-        }, (snapshot: ProviderHomeSnapshot) => 'home_remote_source_' + snapshot.sourceId)
-      }.width('100%').margin({ top: 18 })
-    }
-  }
-
-  @Builder
-  private RemoteHomeItem(item: MediaItem): void {
-    if (this.isPosterHomeItem(item)) {
-      MediaPosterCard({
-        title: item.title,
-        subtitle: item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'),
-        artworkUrl: item.poster,
-        cardWidth: ResponsiveSizeClassResolver.posterWidth(this.screenWidthVp),
-        sharedTransitionId: this.embyArtworkSharedTransitionId(item),
-        onCardClick: () => {
-          void this.openHomeItem(item)
-        }
-      })
-    } else {
-      MediaLandscapeCard({
-        title: item.title,
-        subtitle: item.subtitle.length > 0 ? item.subtitle : (item.browsable ? '浏览' : '播放'),
-        artworkUrl: item.poster,
-        positionMs: item.positionMs,
-        durationMs: item.durationMs,
-        cardWidth: ResponsiveSizeClassResolver.landscapeWidth(this.screenWidthVp),
-        onCardClick: () => {
-          void this.openHomeItem(item)
-        }
-      })
-    }
-  }
-
-  private sourceStatus(source: MediaSourceInstance): string {
-    if (source.providerType === 'local' || source.enabled) return ''
-    return '已停用'
-  }
-
-  private quickAccessSources(): MediaSourceInstance[] {
-    const result: MediaSourceInstance[] = []
-    for (let i = 0; i < this.mediaSources.length; i++) {
-      if (this.mediaSources[i].providerType !== 'local' && this.mediaSources[i].id !== 'local') {
-        result.push(this.mediaSources[i])
-      }
-    }
-    return result
   }
 
   @Builder
@@ -472,12 +385,6 @@ export struct LibraryPage {
     })
   }
 
-  private openSource(source: MediaSourceInstance): void {
-    const descriptor = ProviderCatalog.get(source.providerType)
-    if (descriptor === null || descriptor.browserRoute.length === 0) return
-    void router.pushUrl({ url: descriptor.browserRoute, params: descriptor.browserParams(source.id) })
-  }
-
   @Builder
   private RootFolderEntryGridCard(entry: UserFolderEntry): void {
     Column({ space: 8 }) {
@@ -543,6 +450,7 @@ export struct LibraryPage {
   }
 
   private async reloadPageData(): Promise<void> {
+    if (this.disposed || !this.isActive) return
     if (this.reloadInFlight) {
       this.reloadAgain = true
       return
@@ -568,121 +476,12 @@ export struct LibraryPage {
       await this.loadLocalHistory(generation)
     }
     if (generation !== this.reloadGeneration || !this.isActive) return
-    this.mediaSources = await MediaSourceStore.getAll()
-    if (generation !== this.reloadGeneration || !this.isActive) return
-    void this.loadHomeSnapshots(generation)
     if (this.appRdbReady) {
       await this.loadContinueWatchingHistory(generation)
     }
     if (generation === this.reloadGeneration && this.isActive) {
       this.scanOwnFolderIfNeeded(true)
     }
-  }
-
-  private async loadHomeSnapshots(generation: number): Promise<void> {
-    if (this.homeSnapshotInFlight) {
-      this.homeSnapshotAgain = true
-      return
-    }
-    this.homeSnapshotInFlight = true
-    try {
-      await this.performLoadHomeSnapshots(generation)
-    } finally {
-      this.homeSnapshotInFlight = false
-      const nextGeneration = this.reloadGeneration
-      const shouldReload = this.homeSnapshotAgain && nextGeneration !== generation
-      this.homeSnapshotAgain = false
-      if (shouldReload) {
-        void this.loadHomeSnapshots(nextGeneration)
-      }
-    }
-  }
-
-  private async performLoadHomeSnapshots(generation: number): Promise<void> {
-    try {
-      const context = getContext(this) as common.UIAbilityContext
-      const snapshots = await this.homeCoordinator.load(context)
-      if (generation === this.reloadGeneration && this.isActive) this.homeSnapshots = snapshots
-    } catch (err) {
-      if (generation === this.reloadGeneration) {
-        logger.warn('加载首页来源快照失败: %{public}s', err instanceof Error ? err.message : String(err))
-        this.homeSnapshots = []
-      }
-    }
-  }
-
-  private async openHomeItem(item: MediaItem): Promise<void> {
-    try {
-      if (this.isEmbyContentItem(item)) {
-        await router.pushUrl({
-          url: 'pages/emby/EmbyDetailPage',
-          params: this.embyDetailParams(item)
-        })
-        return
-      }
-      if (item.browsable) {
-        const descriptor = ProviderCatalog.get(this.providerTypeForSource(item.sourceId))
-        if (descriptor === null || descriptor.browserRoute.length === 0) throw new Error('该来源暂不支持浏览')
-        const params = descriptor.browserParams(item.sourceId)
-        params.parentId = item.id
-        await router.pushUrl({ url: descriptor.browserRoute, params: params })
-      } else if (item.playable) {
-        await ProviderPlaybackLauncher.open(this.getUIContext(), item)
-      }
-    } catch (err) {
-      logger.warn('打开首页推荐失败: %{public}s', err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  private isPosterHomeItem(item: MediaItem): boolean {
-    return item.type === MediaItemType.MOVIE || item.type === MediaItemType.SERIES ||
-      item.type === MediaItemType.SEASON || item.type === MediaItemType.COLLECTION
-  }
-
-  private async openHomeSection(sourceId: string, sectionId: string, sectionTitle: string = ''): Promise<void> {
-    try {
-      const descriptor = ProviderCatalog.get(this.providerTypeForSource(sourceId))
-      if (descriptor === null || descriptor.browserRoute.length === 0) throw new Error('该来源暂不支持浏览')
-      const params = descriptor.sectionParams(sourceId, sectionId, sectionTitle)
-      await router.pushUrl({ url: descriptor.browserRoute, params: params })
-    } catch (err) {
-      logger.warn('打开首页推荐区失败: %{public}s', err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  private isEmbyContentItem(item: MediaItem): boolean {
-    const providerType = this.providerTypeForSource(item.sourceId)
-    if (providerType !== 'emby') return false
-    return item.type === MediaItemType.MOVIE || item.type === MediaItemType.SERIES ||
-      item.type === MediaItemType.SEASON || item.type === MediaItemType.EPISODE ||
-      item.type === MediaItemType.VIDEO || item.type === MediaItemType.COLLECTION
-  }
-
-  private embyDetailParams(item: MediaItem): Record<string, Object> {
-    const params: Record<string, Object> = { 'sourceId': item.sourceId, 'itemId': item.id }
-    if (item.type === MediaItemType.SEASON && item.seriesId.length > 0) {
-      params['itemId'] = item.seriesId
-      params['initialSeasonId'] = item.id
-    } else if (item.type === MediaItemType.EPISODE && item.seriesId.length > 0) {
-      params['itemId'] = item.seriesId
-      params['initialSeasonId'] = item.seasonId.length > 0 ? item.seasonId : item.parentId
-      params['initialEpisodeId'] = item.id
-      params['initialEpisodeIndex'] = item.indexNumber
-    }
-    return params
-  }
-
-  private providerTypeForSource(sourceId: string): string {
-    const normalized = sourceId.trim().toLowerCase()
-    for (let i = 0; i < this.mediaSources.length; i++) {
-      if (this.mediaSources[i].id.trim().toLowerCase() === normalized) return this.mediaSources[i].providerType
-    }
-    return normalized
-  }
-
-  private embyArtworkSharedTransitionId(item: MediaItem): string {
-    return this.providerTypeForSource(item.sourceId) === 'emby' ?
-      'emby_artwork_' + item.sourceId + '_' + item.id : ''
   }
 
   @Builder
@@ -733,41 +532,7 @@ export struct LibraryPage {
         const localItem = this.toHistoryViewItemFromLocal(this.localHistory[i])
         if (!localItem.completed) merged.push(localItem)
       }
-      const enabledSources: Record<string, boolean> = {}
-      for (let i = 0; i < this.mediaSources.length; i++) {
-        enabledSources[this.mediaSources[i].id] = this.mediaSources[i].enabled
-      }
-      const serverSourceIds: Record<string, boolean> = {}
       const context = getContext(this) as common.UIAbilityContext
-      for (let i = 0; i < this.mediaSources.length; i++) {
-        const source = this.mediaSources[i]
-        if (source.providerType === 'local' || source.enabled !== true) continue
-        try {
-          const provider = await ProviderRegistry.get(source.id, context, true)
-          if (provider === null || !provider.hasCapability(ProviderCapability.RESUME)) continue
-          const items = await provider.getResumeItems(HOME_HISTORY_LIMIT)
-          for (let j = 0; j < items.length; j++) {
-            const item = items[j]
-            if (item === null || typeof item !== 'object' || Array.isArray(item) ||
-              item.playable !== true || item.id.trim().length === 0) continue
-            const viewItem = this.toHistoryViewItemFromMedia(item)
-            if (!viewItem.completed) merged.push(viewItem)
-          }
-          serverSourceIds[source.id] = true
-        } catch (err) {
-          logger.warn('读取来源续播失败，回退本地缓存: source=%{public}s error=%{public}s',
-            source.id, err instanceof Error ? err.message : String(err))
-        }
-      }
-      const unified = await this.unifiedHistoryStore.getAll()
-      for (let i = 0; i < unified.length; i++) {
-        const record = unified[i]
-        if (record.sourceId === 'local' || enabledSources[record.sourceId] !== true) continue
-        if (serverSourceIds[record.sourceId] === true) continue
-        if (record.durationMs > 0 && record.positionMs / record.durationMs >= 0.995) continue
-        const viewItem = this.toHistoryViewItemFromRecord(record)
-        if (!viewItem.completed) merged.push(viewItem)
-      }
       merged.sort((left: PlaybackHistoryViewItem, right: PlaybackHistoryViewItem) => right.lastPlayedAt - left.lastPlayedAt)
       await this.historyRepository.resolveArtwork(merged, context)
       if (generation !== this.reloadGeneration) return
@@ -799,69 +564,27 @@ export struct LibraryPage {
     return item
   }
 
-  private toHistoryViewItemFromRecord(record: PlaybackHistoryRecord): PlaybackHistoryViewItem {
-    const item = new PlaybackHistoryViewItem()
-    item.sourceId = record.sourceId
-    item.mediaId = record.mediaId
-    item.key = item.sourceId.length > 0 && item.mediaId.length > 0 ? item.sourceId + ':' + item.mediaId : ''
-    item.title = record.title.length > 0 ? record.title : record.mediaId
-    item.subtitle = record.subtitle
-    item.artworkRef = record.artworkRef.length > 0 ? record.artworkRef : record.artwork
-    item.artworkUrl = ''
-    item.positionMs = record.positionMs
-    item.durationMs = record.durationMs
-    item.lastPlayedAt = record.lastPlayedAt
-    item.remoteRecordId = record.id
-    item.completed = this.isCompleted(item)
-    return item
-  }
-
-  private toHistoryViewItemFromMedia(record: MediaItem): PlaybackHistoryViewItem {
-    const item = new PlaybackHistoryViewItem()
-    item.sourceId = record.sourceId
-    item.mediaId = record.id
-    item.key = item.sourceId.length > 0 && item.mediaId.length > 0 ? item.sourceId + ':' + item.mediaId : ''
-    item.title = record.title.length > 0 ? record.title : record.id
-    item.subtitle = record.subtitle
-    item.artworkRef = record.artworkRef.length > 0 ? record.artworkRef : record.poster
-    item.artworkUrl = record.poster
-    item.positionMs = record.positionMs
-    item.durationMs = record.durationMs
-    item.lastPlayedAt = Date.now()
-    item.completed = this.isCompleted(item)
-    return item
-  }
-
   private async scanOwnFolderIfNeeded(force: boolean = false): Promise<void> {
-    if (this.ownFolderScanning || (this.hasScannedOwnFolder && !force)) {
+    if (this.disposed || !this.isActive || this.ownFolderScanning || (this.hasScannedOwnFolder && !force)) {
       return
     }
     this.ownFolderScanning = true
     this.ownFolderScanFailed = false
     try {
       const context = getContext(this) as common.UIAbilityContext
-      let videos = await UserDownloadFolder.scanOwnVideoFiles(context)
+      const videos = await UserDownloadFolder.scanOwnVideoFiles(context)
+      if (this.disposed || !this.isActive) return
       if (videos === null) {
-        logger.warn('媒体库扫描失败，尝试重新激活应用专属目录')
-        const reactivatedPath = await UserDownloadFolder.reactivateOwnFolder(context)
-        if (reactivatedPath.length > 0) {
-          videos = await UserDownloadFolder.scanOwnVideoFiles(context)
-        }
-      }
-      if (videos === null) {
+        this.rootFolderEntries = []
+        this.ownFolderVideoCount = 0
+        this.ownFolderCount = 0
+        this.ownFolderScanned = false
         this.ownFolderScanFailed = true
         return
       }
       this.ownFolderVideoCount = videos.length
-      let rootEntries = await UserDownloadFolder.listOwnDirectory(context)
-      if (rootEntries === null) {
-        const reactivatedPath = await UserDownloadFolder.reactivateOwnFolder(context)
-        if (reactivatedPath.length > 0) {
-          videos = await UserDownloadFolder.scanOwnVideoFiles(context) ?? []
-          rootEntries = await UserDownloadFolder.listOwnDirectory(context)
-          this.ownFolderVideoCount = videos.length
-        }
-      }
+      const rootEntries = await UserDownloadFolder.listOwnDirectory(context)
+      if (this.disposed || !this.isActive) return
       let directoryCount = 0
       if (rootEntries !== null) {
         for (let i = 0; i < rootEntries.length; i++) {
@@ -874,6 +597,7 @@ export struct LibraryPage {
         this.ensureRootEntryCovers()
       } else {
         this.rootFolderEntries = []
+        this.ownFolderScanFailed = true
       }
       this.ownFolderCount = directoryCount
       this.ownFolderScanned = true
@@ -1277,7 +1001,7 @@ export struct LibraryPage {
       return '正在读取目录'
     }
     if (this.ownFolderScanFailed) {
-      return '应用专属目录暂不可访问'
+      return '请在服务页点击“本地文件夹”创建或恢复专属目录'
     }
     if (!this.ownFolderScanned) {
       return '应用专属目录'

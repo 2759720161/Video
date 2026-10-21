@@ -1,9 +1,6 @@
+import { buildDetailToastOptions } from '../../utils/DetailMaterial'
 import { PlayerSurface, releaseRetainedPlayerSession } from '../../components/player/PlayerSurface'
 import { GestureLayer } from '../../components/player/GestureLayer'
-import { PlayerTopBar } from '../../components/player/PlayerTopBar'
-import { PlayerProgressBar } from '../../components/player/PlayerProgressBar'
-import { PlayerPrimaryControls } from '../../components/player/PlayerPrimaryControls'
-import { PlayerToolBar } from '../../components/player/PlayerToolBar'
 import { PlayerMorePanel } from '../../components/player/PlayerMorePanel'
 import { PlaybackVariantPanel } from '../../components/player/PlaybackVariantPanel'
 import { DanmakuCanvas } from '../../components/player/DanmakuCanvas'
@@ -37,6 +34,7 @@ import { NowPlayingActions, NowPlayingStore } from '../../services/NowPlayingSto
 import { AppRadius } from '../../ui/theme/AppRadius'
 import { router, window, PiPWindow, promptAction } from '@kit.ArkUI'
 import { http } from '@kit.NetworkKit'
+import { fileIo } from '@kit.CoreFileKit'
 import { KeyCode } from '@ohos.multimodalInput.keyCode'
 import { audio } from '@kit.AudioKit'
 import { common } from '@kit.AbilityKit'
@@ -237,6 +235,8 @@ struct PlayerPage {
   private mediaVolumeMinLevel: number = -1
   private mediaVolumeMaxLevel: number = -1
   private tracksLoadedForUrl: string = ''
+  private initialTracksAppliedForUrl: string = ''
+  private tracksRefreshing: boolean = false
   private videoInfoLoadedForUrl: string = ''
   private completionHandledForUrl: string = ''
   private streamRefreshInFlight: Promise<void> | null = null
@@ -426,7 +426,7 @@ struct PlayerPage {
 
   private showPiPBackBlockedToast(): void {
     try {
-      promptAction.showToast({ message: '画中画启动失败' })
+      promptAction.showToast(buildDetailToastOptions('画中画启动失败'))
     } catch (_err) {
     }
   }
@@ -997,37 +997,48 @@ struct PlayerPage {
 
   @Builder
   private VideoTopBar() {
-    PlayerTopBar({ title: this.videoFileName, topInset: this.topSafeHeight,
-      showPiP: PiPManager.isPiPSupported() && this.hasEngine,
-      onBack: () => this.leaveFromTopBar(),
-      onPiP: () => {
-        if (!this.isPlayerControlActionAllowed()) return
-        this.startPiPFromControl()
-        this.showControlsWithAutoHide()
-      },
-      onMore: () => this.openTopMoreMenu() })
+    Row() {
+      Row() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(28)
+          .fontColor([$r('app.color.text_on_primary')])
+      }
+      .width(48)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => this.leaveFromTopBar())
+
+      Text(this.videoFileName.length > 0 ? this.videoFileName : '播放')
+        .fontSize(15)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_on_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+        .margin({ left: 10, right: 10 })
+        .accessibilityText('播放设置')
+        .onClick(() => this.openTopMoreMenu())
+
+      this.PiPToolButton()
+
+      this.TopSymbolButton($r('sys.symbol.rectangle_4_group_1'), '视频比例', () => {
+        this.showAspectModePanel = true
+        this.pauseAutoHideTimer()
+      })
+    }
+    .width('100%')
+    .height(this.topSafeHeight + 68)
+    .padding({ left: 10, right: 14, top: this.topSafeHeight + 8, bottom: 8 })
+    .linearGradient({
+      direction: GradientDirection.Bottom,
+      colors: [['#AA000000', 0.0], ['#5C000000', 0.55], ['#00000000', 1.0]]
+    })
     .zIndex(6)
     .translate({ y: this.isControlVisible ? 0 : -12 })
     .opacity(this.isControlVisible ? 1 : 0)
     .hitTestBehavior(this.isControlVisible ? HitTestMode.Default : HitTestMode.None)
     .animation({ duration: this.getControlAnimationDuration(), curve: Curve.EaseInOut })
-  }
-
-  private leaveFromTopBar(): void {
-    if (!this.isPlayerControlActionAllowed()) return
-    if (this.isFullScreen) {
-      this.toggleFullScreen()
-    } else if (this.shouldAutoLeaveWithTypeNodePiP()) {
-      this.leavePlayerWithPiP()
-    } else {
-      this.leavePlayerNormally()
-    }
-  }
-
-  private openTopMoreMenu(): void {
-    if (!this.isPlayerControlActionAllowed()) return
-    this.showMorePanel = true
-    this.pauseAutoHideTimer()
   }
 
   @Builder
@@ -1056,12 +1067,373 @@ struct PlayerPage {
   @Builder
   private LandscapeProgressRow() {
     Column({ space: 2 }) {
-      PlayerProgressBar({ positionMs: this.positionMs, durationMs: this.durationMs,
-        isInteractive: this.shouldShowBottomControlLayer(),
-        onChange: (value: number, mode: SliderChangeMode) => this.onProgressChanged(value, mode) })
+      this.ProgressUtilityRow()
+      Row() {
+        Text(this.formatTime(this.positionMs))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_on_primary'))
+        this.ProgressSlider()
+        Text(this.formatTime(this.durationMs))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_on_primary'))
+      }
+      .width('100%')
+      .height(28)
     }
     .width('100%')
     .padding({ left: 20, right: 20, bottom: 2 })
+  }
+
+  @Builder
+  private ProgressSlider() {
+    Slider({
+      value: this.durationMs > 0 ? this.positionMs : 0,
+      min: 0,
+      max: this.durationMs > 0 ? this.durationMs : 1,
+      step: 1000
+    })
+      .layoutWeight(1)
+      .trackColor('#55FFFFFF')
+      .selectedColor($r('app.color.accent_blue'))
+      .blockColor($r('app.color.text_on_primary'))
+      .hitTestBehavior(this.shouldShowBottomControlLayer() ? HitTestMode.Default : HitTestMode.None)
+      .onChange((value: number, mode: SliderChangeMode) => this.onProgressChanged(value, mode))
+  }
+
+  @Builder
+  private PortraitControlRow() {
+    Column() {
+      this.ProgressUtilityRow()
+
+      Row() {
+        Text(this.formatTime(this.positionMs))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#E6FFFFFF')
+        this.ProgressSlider()
+        Text(this.formatTime(this.durationMs))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#E6FFFFFF')
+      }
+      .width('100%')
+      .height(24)
+      .padding({ left: 14, right: 14 })
+
+      this.PrimaryPlaybackControls()
+    }
+    .width('100%')
+    .padding({ bottom: (this.bottomSafeHeight > 0 ? this.bottomSafeHeight : 0) + 16 })
+  }
+
+  @Builder
+  private VideoInfoRow(): void {
+    if (this.hasVideoInfo()) {
+      Row({ space: 12 }) {
+        if (this.videoCodec.length > 0) {
+          this.VideoInfoText(this.formatVideoCodec())
+        }
+        if (this.videoWidth > 0 && this.videoHeight > 0) {
+          this.VideoInfoText(this.videoWidth + '×' + this.videoHeight)
+        }
+        if (this.videoFrameRate > 0) {
+          this.VideoInfoText(this.formatVideoFrameRate())
+        }
+        if (this.videoBitrate > 0) {
+          this.VideoInfoText(this.formatVideoBitrate())
+        }
+        if (this.videoDecoder.length > 0) {
+          this.VideoInfoText(this.videoDecoder)
+        }
+        if (this.videoDynamicRange.length > 0) {
+          this.VideoInfoText(this.videoDynamicRange)
+        }
+      }
+      .height(20)
+    }
+  }
+
+  /** 位于进度条上方：左侧媒体信息，右侧独立字幕入口。 */
+  @Builder
+  private ProgressUtilityRow(): void {
+    Row() {
+      this.VideoInfoRow()
+      Blank()
+        .layoutWeight(1)
+      Row({ space: 2 }) {
+        this.SubtitleToolButton()
+        this.AudioTrackToolButton()
+      }
+    }
+    .width('100%')
+    .height(32)
+    .padding({ left: 2, right: 2 })
+  }
+
+  @Builder
+  private SubtitleToolButton(): void {
+    Row() {
+      SymbolGlyph($r('sys.symbol.AI_word_suggest'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    }
+    .width(36)
+    .height(30)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(15)
+    .onClick(() => {
+      if (!this.isPlayerControlActionAllowed()) {
+        return
+      }
+      this.openTrackSheet(PlayerTrackType.subtitle)
+    })
+  }
+
+  @Builder
+  private AudioTrackToolButton(): void {
+    Row() {
+      SymbolGlyph($r('sys.symbol.identify_song'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    }
+    .width(36)
+    .height(30)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(15)
+    .onClick(() => {
+      if (!this.isPlayerControlActionAllowed()) {
+        return
+      }
+      this.openTrackSheet(PlayerTrackType.audio)
+    })
+  }
+
+  @Builder
+  private VideoInfoText(value: string): void {
+    Text(value)
+      .fontSize(12)
+      .fontWeight(FontWeight.Medium)
+      .fontColor('#E6FFFFFF')
+      .maxLines(1)
+  }
+
+  @Builder
+  private LandscapeControlRow() {
+    Column() {
+      this.PrimaryPlaybackControls()
+    }
+    .height(this.bottomSafeHeight + 62)
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 8, bottom: this.bottomSafeHeight + 12 })
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  private PrimaryPlaybackControls(): void {
+    Stack({ alignContent: Alignment.Center }) {
+      // 主控组独立于右侧功能键，播放/暂停始终相对整条底栏居中。
+      Row({ space: 6 }) {
+        this.SeekControlButton(false)
+        this.TopSymbolButton($r('sys.symbol.backward_end_fill'), '上一个视频', () => {
+          this.playPreviousQueueItem()
+        })
+
+        if (this.isPlaying) {
+          this.TopSymbolButton($r('sys.symbol.pause_fill'), '暂停', () => {
+            this.togglePlayPause()
+          })
+        } else {
+          this.TopSymbolButton($r('sys.symbol.play_fill'), '播放', () => {
+            this.togglePlayPause()
+          })
+        }
+
+        this.TopSymbolButton($r('sys.symbol.forward_end_fill'), '下一个视频', () => {
+          this.playNextQueueItem(false)
+        })
+        this.SeekControlButton(true)
+      }
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+
+      // 竖屏将倍速置于左端，横屏仍与全屏按钮保持在右端；
+      // 中间主控独立于这条功能栏，始终相对整条底栏居中。
+      Row() {
+        if (!this.isFullScreen) {
+          this.SpeedToolButton()
+        }
+        Blank()
+          .layoutWeight(1)
+        if (this.isFullScreen) {
+          this.SpeedToolButton()
+        }
+        this.TopSymbolButton(
+          this.isFullScreen ? $r('sys.symbol.rectangle_portrait_rotate') : $r('sys.symbol.rectangle_rotate'),
+          this.isFullScreen ? '退出全屏' : '全屏', () => {
+          this.toggleFullScreen()
+        })
+      }
+      .width('100%')
+      .height(44)
+      .justifyContent(FlexAlign.End)
+      .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.Transparent)
+    }
+    .width('100%')
+    .height(50)
+    .padding({ left: 10, right: 10, bottom: 8 })
+  }
+
+  @Builder
+  private SpeedToolButton() {
+    Row() {
+      this.CurrentSpeedSymbol()
+    }
+    .width(44)
+    .height(40)
+    .backgroundColor('#00000000')
+    .border({ width: 0, color: '#00000000' })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      if (!this.isPlayerControlActionAllowed()) {
+        return
+      }
+      if (this.showSpeedMenu) {
+        this.closeSpeedMenu()
+      } else {
+        this.openSpeedMenu()
+      }
+    })
+  }
+
+  @Builder
+  private CurrentSpeedSymbol(): void {
+    if (this.speed === 0.5) {
+      SymbolGlyph($r('sys.symbol.speed_50percent'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    } else if (this.speed === 0.75) {
+      SymbolGlyph($r('sys.symbol.speed_75percent'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    } else if (this.speed === 1.25) {
+      SymbolGlyph($r('sys.symbol.speed_125percent'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    } else if (this.speed === 1.5) {
+      SymbolGlyph($r('sys.symbol.speed_150percent'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    } else if (this.speed === 2.0) {
+      SymbolGlyph($r('sys.symbol.speed_200percent'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    } else if (this.speed === 3.0) {
+      Text('3×')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_on_primary'))
+    } else {
+      SymbolGlyph($r('sys.symbol.speed_100percent'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    }
+  }
+
+  @Builder
+  private TopSymbolButton(symbol: Resource, accessibilityLabel: string, action: () => void) {
+    Row() {
+      SymbolGlyph(symbol)
+        .fontSize(22)
+        .fontColor([$r('app.color.text_on_primary')])
+    }
+    .width(44)
+    .height(44)
+    .borderRadius(22)
+    .backgroundColor('#00000000')
+    .border({ width: 0, color: '#00000000' })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .accessibilityText(accessibilityLabel)
+    .onClick(() => {
+      if (!this.isPlayerControlActionAllowed()) {
+        return
+      }
+      action()
+      this.showControlsWithAutoHide()
+    })
+  }
+
+  @Builder
+  private SeekControlButton(forward: boolean): void {
+    if (normalizeSeekSeconds(this.playerSeekSeconds) === 10) {
+      if (forward) {
+        this.TopSymbolButton($r('sys.symbol.goforward_10'), '前进 10 秒', () => this.seekByConfiguredSeconds(true))
+      } else {
+        this.TopSymbolButton($r('sys.symbol.gobackward_10'), '后退 10 秒', () => this.seekByConfiguredSeconds(false))
+      }
+    } else if (normalizeSeekSeconds(this.playerSeekSeconds) === 30) {
+      if (forward) {
+        this.TopSymbolButton($r('sys.symbol.goforward_30'), '前进 30 秒', () => this.seekByConfiguredSeconds(true))
+      } else {
+        this.TopSymbolButton($r('sys.symbol.gobackward_30'), '后退 30 秒', () => this.seekByConfiguredSeconds(false))
+      }
+    } else {
+      if (forward) {
+        this.TopSymbolButton($r('sys.symbol.goforward_15'), '前进 15 秒', () => this.seekByConfiguredSeconds(true))
+      } else {
+        this.TopSymbolButton($r('sys.symbol.gobackward_15'), '后退 15 秒', () => this.seekByConfiguredSeconds(false))
+      }
+    }
+  }
+
+  @Builder
+  private PiPToolButton() {
+    if (PiPManager.isPiPSupported() && this.hasEngine) {
+      Row() {
+        Image($r('app.media.ic_pip'))
+          .draggable(false)
+          .width(22)
+          .height(22)
+      }
+      .width(44)
+      .height(40)
+      .borderRadius(20)
+      .backgroundColor('#00000000')
+      .border({ width: 0, color: '#00000000' })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        if (!this.isPlayerControlActionAllowed()) {
+          return
+        }
+        this.startPiPFromControl()
+        this.showControlsWithAutoHide()
+      })
+    }
+  }
+
+  private leaveFromTopBar(): void {
+    if (!this.isPlayerControlActionAllowed()) return
+    if (this.isFullScreen) {
+      this.toggleFullScreen()
+    } else if (this.shouldAutoLeaveWithTypeNodePiP()) {
+      this.leavePlayerWithPiP()
+    } else {
+      this.leavePlayerNormally()
+    }
+  }
+
+  private openTopMoreMenu(): void {
+    if (!this.isPlayerControlActionAllowed()) return
+    this.showMorePanel = true
+    this.pauseAutoHideTimer()
   }
 
   private onProgressChanged(value: number, mode: SliderChangeMode): void {
@@ -1081,108 +1453,6 @@ struct PlayerPage {
     } else {
       this.positionMs = value
     }
-  }
-
-  @Builder
-  private PortraitControlRow() {
-    Column() {
-      PlayerProgressBar({ positionMs: this.positionMs, durationMs: this.durationMs,
-        isInteractive: this.shouldShowBottomControlLayer(),
-        onChange: (value: number, mode: SliderChangeMode) => this.onProgressChanged(value, mode) })
-        .padding({ left: 14, right: 14 })
-
-      this.PrimaryPlaybackControls()
-      this.PlayerToolbarV2()
-    }
-    .width('100%')
-    .padding({ bottom: (this.bottomSafeHeight > 0 ? this.bottomSafeHeight : 0) + 16 })
-  }
-
-  @Builder
-  private LandscapeControlRow() {
-    Column() {
-      this.PrimaryPlaybackControls()
-      this.PlayerToolbarV2()
-    }
-    // 主控、带文字的工具栏与底部安全区需要完整的两行高度。
-    .height(this.bottomSafeHeight + 134)
-    .width('100%')
-    .padding({ left: 20, right: 20, top: 8, bottom: this.bottomSafeHeight + 12 })
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  private PrimaryPlaybackControls(): void {
-    Stack({ alignContent: Alignment.Center }) {
-      // 主控组独立于右侧功能键，播放/暂停始终相对整条底栏居中。
-      PlayerPrimaryControls({ isPlaying: this.isPlaying, showQueue: this.playbackQueue.length > 1,
-        seekBackSymbol: this.configuredSeekSymbol(false), seekForwardSymbol: this.configuredSeekSymbol(true),
-        onSeekBack: () => {
-          if (!this.isPlayerControlActionAllowed()) return
-          this.seekByConfiguredSeconds(false)
-          this.showControlsWithAutoHide()
-        },
-        onPrevious: () => {
-          if (!this.isPlayerControlActionAllowed()) return
-          this.playPreviousQueueItem()
-          this.showControlsWithAutoHide()
-        },
-        onPlayPause: () => {
-          if (!this.isPlayerControlActionAllowed()) return
-          this.togglePlayPause()
-          this.showControlsWithAutoHide()
-        },
-        onNext: () => {
-          if (!this.isPlayerControlActionAllowed()) return
-          void this.playNextQueueItem(false)
-          this.showControlsWithAutoHide()
-        },
-        onSeekForward: () => {
-          if (!this.isPlayerControlActionAllowed()) return
-          this.seekByConfiguredSeconds(true)
-          this.showControlsWithAutoHide()
-        } })
-
-    }
-    .width('100%')
-    .height(50)
-    .padding({ left: 10, right: 10, bottom: 8 })
-  }
-
-  @Builder
-  private PlayerToolbarV2(): void {
-    PlayerToolBar({ isDanmakuEnabled: this.isDanmakuEnabled,
-      onDanmaku: () => {
-        if (!this.isPlayerControlActionAllowed()) return
-        this.toggleDanmaku()
-        this.showControlsWithAutoHide()
-      },
-      onSubtitle: () => {
-        if (!this.isPlayerControlActionAllowed()) return
-        this.openTrackSheet(PlayerTrackType.subtitle)
-      },
-      onSpeed: () => {
-        if (!this.isPlayerControlActionAllowed()) return
-        if (this.showSpeedMenu) this.closeSpeedMenu()
-        else this.openSpeedMenu()
-      },
-      onMore: () => this.openTopMoreMenu(),
-      onFullscreen: () => {
-        if (!this.isPlayerControlActionAllowed()) return
-        this.toggleFullScreen()
-      } })
-      .width('100%')
-      .margin({ top: 6 })
-  }
-
-  private configuredSeekSymbol(forward: boolean): Resource {
-    if (normalizeSeekSeconds(this.playerSeekSeconds) === 10) {
-      return forward ? $r('sys.symbol.goforward_10') : $r('sys.symbol.gobackward_10')
-    }
-    if (normalizeSeekSeconds(this.playerSeekSeconds) === 30) {
-      return forward ? $r('sys.symbol.goforward_30') : $r('sys.symbol.gobackward_30')
-    }
-    return forward ? $r('sys.symbol.goforward_15') : $r('sys.symbol.gobackward_15')
   }
 
   @Builder
@@ -2045,6 +2315,7 @@ struct PlayerPage {
     item.positionMs = PlaybackQueueItem.normalizePositionMs(this.positionMs)
     item.startFromBeginning = false
     item.variantId = selectedId
+    item.trackSelection = null
     this.showVariantSheet = false
     await this.playQueueItem(this.currentQueueIndex, false)
   }
@@ -2567,7 +2838,6 @@ struct PlayerPage {
 
     if ((state.stateName === 'prepared' || state.stateName === 'playing') &&
       this.videoUri.length > 0 && this.tracksLoadedForUrl !== this.videoUri) {
-      this.tracksLoadedForUrl = this.videoUri
       this.refreshPlayerTracks()
     }
     if ((state.stateName === 'prepared' || state.stateName === 'playing') &&
@@ -2681,11 +2951,22 @@ struct PlayerPage {
   }
 
   private async refreshPlayerTracks(): Promise<void> {
-    if (!this.hasEngine || this.playerEngine === null) {
+    if (!this.hasEngine || this.playerEngine === null || this.tracksRefreshing) {
       return
     }
+    const engine = this.playerEngine
+    const url = this.videoUri
+    this.tracksRefreshing = true
     try {
-      this.availableTracks = await this.playerEngine.getTracks()
+      const tracks = await engine.getTracks()
+      if (engine !== this.playerEngine || url !== this.videoUri || !this.isPageAlive) return
+      this.availableTracks = tracks
+      if (tracks.length > 0) {
+        await this.applyInitialTrackSelection()
+        if (engine !== this.playerEngine || url !== this.videoUri || !this.isPageAlive) return
+        this.tracksLoadedForUrl = url
+        void this.loadSessionSubtitle()
+      }
       // 外挂字幕在关闭后仍会保留在 MPV 轨道列表中，不能用异步返回的 selected
       // 覆盖用户刚刚在菜单中作出的选择；内嵌字幕则以播放器返回状态为准。
       if (!this.hasLoadedExternalSubtitle()) {
@@ -2703,6 +2984,39 @@ struct PlayerPage {
     } catch (err) {
       this.availableTracks = []
       logger.warn('读取本地播放器轨道失败: %{public}s', err instanceof Error ? err.message : String(err))
+    } finally {
+      this.tracksRefreshing = false
+    }
+  }
+
+  private async applyInitialTrackSelection(): Promise<void> {
+    if (this.session === null || this.playerEngine === null || this.initialTracksAppliedForUrl === this.videoUri) return
+    const engine = this.playerEngine
+    const url = this.videoUri
+    const session = this.session
+    this.initialTracksAppliedForUrl = url
+    try {
+      const audio = this.getTracksByType(PlayerTrackType.audio)[session.stream.audioTrackOrdinal]
+      if (session.stream.audioTrackOrdinal >= 0 && audio === undefined) throw new Error('所选音轨不可用')
+      if (audio !== undefined) await engine.selectTrack(audio.index, PlayerTrackType.audio)
+      if (engine !== this.playerEngine || url !== this.videoUri || !this.isPageAlive) return
+      const subtitleOrdinal = session.stream.subtitleTrackOrdinal
+      const subtitles = this.getTracksByType(PlayerTrackType.subtitle)
+      if (subtitleOrdinal === -1) {
+        for (let i = 0; i < subtitles.length; i++) {
+          if (subtitles[i].selected) await engine.deselectTrack(subtitles[i].index)
+        }
+        await engine.deselectTrack(-1)
+      } else if (subtitleOrdinal >= 0) {
+        if (subtitles[subtitleOrdinal] === undefined) throw new Error('所选字幕轨道不可用')
+        await engine.selectTrack(subtitles[subtitleOrdinal].index, PlayerTrackType.subtitle)
+      }
+      if (engine !== this.playerEngine || url !== this.videoUri || !this.isPageAlive) return
+      if (subtitleOrdinal !== -2) this.subtitleEnabled = subtitleOrdinal >= 0 || session.subtitles.length > 0
+      const tracks = await engine.getTracks()
+      if (engine === this.playerEngine && url === this.videoUri && this.isPageAlive) this.availableTracks = tracks
+    } catch (_) {
+      if (url === this.videoUri && this.isPageAlive) this.showHudText('所选轨道加载失败，可在播放菜单中重新选择')
     }
   }
 
@@ -2857,7 +3171,9 @@ struct PlayerPage {
     try {
       this.setSubtitleMenuSelection('track_' + String(track.index))
       this.setPrimarySubtitleSelectionImmediately(track.index)
-      await this.playerEngine.selectTrack(track.index)
+      this.sessionSubtitleLoadToken++
+      this.sessionSubtitleLoadedForUrl = this.videoUri
+      await this.playerEngine.selectTrack(track.index, track.type)
       if (this.hasLoadedExternalSubtitle()) {
         this.externalSubtitleCues = []
         this.externalSubtitleText = ''
@@ -3027,7 +3343,7 @@ struct PlayerPage {
       return
     }
     try {
-      await this.playerEngine.selectTrack(track.index)
+      await this.playerEngine.selectTrack(track.index, track.type)
       await this.refreshPlayerTracks()
       if (track.type === PlayerTrackType.audio) {
         this.showAudioTrackSheet = false
@@ -3043,6 +3359,8 @@ struct PlayerPage {
   }
 
   private async disableSelectedSubtitleTracks(): Promise<void> {
+    this.sessionSubtitleLoadToken++
+    this.sessionSubtitleLoadedForUrl = this.videoUri
     const subtitles = this.getTracksByType(PlayerTrackType.subtitle)
     this.externalSubtitleText = ''
     this.secondarySubtitleIndex = -1
@@ -3094,7 +3412,7 @@ struct PlayerPage {
       for (let i = 0; i < tracks.length; i++) {
         if (tracks[i].name === this.externalSubtitleFileName) {
           if (this.playerEngine !== null) {
-            await this.playerEngine.selectTrack(tracks[i].index)
+            await this.playerEngine.selectTrack(tracks[i].index, PlayerTrackType.subtitle)
           }
           restored = true
           break
@@ -3170,14 +3488,20 @@ struct PlayerPage {
   /** 加载 Provider 在会话中提供的文本字幕，不依赖具体媒体来源。 */
   private async loadSessionSubtitle(): Promise<void> {
     if (!this.isPageAlive || this.session === null || this.playerEngine === null ||
+      this.tracksLoadedForUrl !== this.videoUri ||
       this.videoUri.length === 0 || this.session.subtitles.length === 0 ||
       this.sessionSubtitleLoadedForUrl === this.videoUri || this.hasLoadedExternalSubtitle()) {
       return
     }
     const token = ++this.sessionSubtitleLoadToken
+    const targetSession = this.session
+    const targetEngine = this.playerEngine
+    const targetUrl = this.videoUri
+    this.sessionSubtitleLoadedForUrl = targetUrl
     let lastError = ''
-    for (let i = 0; i < this.session.subtitles.length; i++) {
-      const subtitle: PlaybackSubtitle = this.session.subtitles[i]
+    for (let i = 0; i < targetSession.subtitles.length; i++) {
+      if (!this.isPageAlive || token !== this.sessionSubtitleLoadToken || this.session !== targetSession) return
+      const subtitle: PlaybackSubtitle = targetSession.subtitles[i]
       if (subtitle.url.length === 0) continue
       const request = http.createHttp()
       try {
@@ -3194,6 +3518,30 @@ struct PlayerPage {
           continue
         }
         const content = typeof response.result === 'string' ? response.result : ''
+        if (!this.isPageAlive || token !== this.sessionSubtitleLoadToken || this.session !== targetSession ||
+          this.playerEngine !== targetEngine || this.videoUri !== targetUrl) return
+        if (this.isAdvancedAssSubtitle(subtitle.displayName)) {
+          const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+          const extension = subtitle.displayName.toLowerCase().endsWith('.ssa') ? 'ssa' : 'ass'
+          const path = context.cacheDir + '/emby-subtitle-' + Date.now() + '-' + token + '.' + extension
+          const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC)
+          try {
+            fileIo.writeSync(file.fd, content, { encoding: 'utf-8' })
+          } finally {
+            fileIo.closeSync(file)
+          }
+          try {
+            await targetEngine.addExternalSubtitle(path, subtitle.displayName)
+          } finally {
+            fileIo.unlinkSync(path)
+          }
+          if (!this.isPageAlive || token !== this.sessionSubtitleLoadToken || this.videoUri !== targetUrl) return
+          this.externalSubtitleFileName = subtitle.displayName
+          this.externalSubtitleUri = subtitle.url
+          this.setSubtitleMenuSelection('external')
+          this.subtitleEnabled = true
+          return
+        }
         const cues = ExternalSubtitleParser.parse(content)
         if (cues.length === 0) {
           lastError = '未识别到可显示的文本字幕'
@@ -3218,6 +3566,7 @@ struct PlayerPage {
     }
     if (lastError.length > 0) {
       logger.warn('加载 Provider 外挂字幕失败: %{public}s', lastError)
+      if (token === this.sessionSubtitleLoadToken && this.isPageAlive) this.showHudText('字幕加载失败，可在播放菜单中重新选择')
     }
   }
 
@@ -4574,7 +4923,7 @@ struct PlayerPage {
 
   private playPreviousQueueItem(): void {
     if (this.currentQueueIndex <= 0) {
-      promptAction.showToast({ message: '已经是第一集了' })
+      promptAction.showToast(buildDetailToastOptions('已经是第一集了'))
       return
     }
     this.playQueueItem(this.currentQueueIndex - 1, false)
@@ -4589,7 +4938,7 @@ struct PlayerPage {
       logger.info('没有可自动播放的同目录视频: autoPlay=%{public}s queue=%{public}d index=%{public}d',
         String(autoPlay), this.playbackQueue.length, this.currentQueueIndex)
       if (!autoPlay) {
-        promptAction.showToast({ message: '已经是最后一集了' })
+        promptAction.showToast(buildDetailToastOptions('已经是最后一集了'))
       }
       return
     }
@@ -4663,6 +5012,7 @@ struct PlayerPage {
     this.clearDanmakuState()
     this.availableTracks = []
     this.tracksLoadedForUrl = ''
+    this.initialTracksAppliedForUrl = ''
     this.videoInfoLoadedForUrl = ''
     this.videoCodec = ''
     this.videoFrameRate = 0

@@ -3,17 +3,20 @@ import { AppTypography } from '../../ui/theme/AppTypography'
 import { AppDimensions } from '../../ui/theme/AppDimensions'
 import { AppMotion } from '../../ui/theme/AppMotion'
 import { AppMediaStyle } from '../../ui/theme/AppMediaStyle'
+import { createArtworkTransitionId } from '../../utils/ArtworkTransition'
 
 @Component
 export struct MediaPosterCard {
   @Prop title: string = ''
   @Prop subtitle: string = ''
+  @Prop subtitleColor: ResourceColor = $r('app.color.text_secondary')
   @Prop artworkUrl: string = ''
-  @Prop sharedTransitionId: string = ''
+  @Prop enableSharedTransition: boolean = false
   @Prop cardWidth: number = AppDimensions.POSTER_CARD_WIDTH
   @State private isPressed: boolean = false
   @State private artworkLoaded: boolean = false
-  onCardClick?: () => void
+  private readonly artworkTransitionId: string = createArtworkTransitionId()
+  onCardClick?: (artworkTransitionId: string) => void
 
   build() {
     Column({ space: 6 }) {
@@ -26,7 +29,7 @@ export struct MediaPosterCard {
         .width(this.cardWidth)
       Text(this.subtitle)
         .fontSize(AppTypography.META)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(this.subtitleColor)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width(this.cardWidth)
@@ -40,19 +43,20 @@ export struct MediaPosterCard {
       else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false
     })
     .onClick(() => {
-      if (this.onCardClick) this.onCardClick()
+      if (this.onCardClick) this.onCardClick(this.enableSharedTransition ? this.artworkTransitionId : '')
     })
   }
 
   @Builder
   private Artwork(): void {
-    if (this.sharedTransitionId.length > 0) {
+    if (this.enableSharedTransition) {
       Image(this.artworkUrl.length > 0 ? this.artworkUrl : $r('app.media.ic_placeholder'))
         .width(this.cardWidth)
         .height(this.cardHeight())
         .objectFit(ImageFit.Cover)
         .borderRadius(AppRadius.MEDIA_POSTER)
-        .sharedTransition(this.sharedTransitionId, { duration: 360, curve: Curve.FastOutSlowIn })
+        .clip(true)
+        .sharedTransition(this.artworkTransitionId, { duration: 360, curve: Curve.FastOutSlowIn })
         .opacity(this.artworkUrl.length > 0 ? (this.artworkLoaded ? 1 : 0) : 0.82)
         .animation({ duration: AppMotion.SMALL_TRANSITION_MS, curve: Curve.EaseOut })
         .onComplete(() => this.artworkLoaded = true)

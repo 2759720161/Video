@@ -1,4 +1,5 @@
 import type { PlaybackVariant } from './PlaybackVariant'
+import { PlaybackTrackSelection } from './PlaybackTrackSelection'
 
 /** 队列保存稳定媒体身份；切换项目时重新解析 PlaybackStream。 */
 export class PlaybackQueueItem {
@@ -14,6 +15,7 @@ export class PlaybackQueueItem {
   startFromBeginning: boolean = false
   /** 线路、清晰度或媒体版本的可选标识。 */
   variantId: string = ''
+  trackSelection: PlaybackTrackSelection | null = null
   /** Provider 暴露的可选线路/版本，页面只消费通用模型。 */
   variants: PlaybackVariant[] = []
 
