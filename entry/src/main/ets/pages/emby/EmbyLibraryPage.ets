@@ -382,6 +382,7 @@ struct EmbyLibraryPage {
         .padding({ left: this.pagePadding(), right: this.pagePadding() })
       }
       .width('100%')
+      .align(Alignment.TopStart)
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
     }

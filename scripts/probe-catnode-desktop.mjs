@@ -14,7 +14,7 @@ const root = mkdtempSync(path.join(parent, 'video-node-probe-'));
 const program = path.join(root, 'program');
 mkdirSync(program);
 const source = fileURLToPath(new URL('../entry/src/main/resources/rawfile/catnode/', import.meta.url));
-for (const file of ['host.cjs', 'bootstrap.cjs']) copyFileSync(path.join(source, file), path.join(program, file));
+for (const file of ['host.cjs', 'bootstrap.cjs', 'artwork.cjs']) copyFileSync(path.join(source, file), path.join(program, file));
 const bundleArgument = process.argv.indexOf('--bundle');
 const fixture = bundleArgument >= 0 ? process.argv[bundleArgument + 1] :
   fileURLToPath(new URL('../native/node/vendor/cat-source-fixture/index.cjs', import.meta.url));
@@ -48,16 +48,24 @@ try {
   const config = await (await fetch(base + '/config')).json();
   const sites = config.video?.sites ?? [];
   assert.ok(sites.length > 0);
-  const target = sites.find(site => site.api === '/spider/wexaitiantang/3');
+  const target = sites.find(site => /^\/spider\/[^/]+\/\d+$/.test(site.api) && Number(site.type) >= 0 && Number(site.type) < 10);
   assert.ok(target);
-  const spiderRoute = target.api.replace(/\/\d+$/, '');
+  let spiderRoute = target.api;
   const post = async (route, body) => {
     const response = await fetch(base + spiderRoute + route, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       signal: AbortSignal.timeout(30000)
     });
-    if (!response.ok) throw new Error('来源接口 HTTP ' + response.status);
     const value = await response.json();
+    if (!response.ok) {
+      if (route === '/init' && response.status === 404 &&
+          value.message === 'Route POST:' + spiderRoute + route + ' not found' &&
+          (!value.code || value.code === 'FST_ERR_NOT_FOUND') && /\/\d+$/.test(spiderRoute)) {
+        spiderRoute = spiderRoute.replace(/\/\d+$/, '');
+        return post(route, body);
+      }
+      throw new Error('来源接口 HTTP ' + response.status);
+    }
     return typeof value === 'string' ? JSON.parse(value) : value;
   };
   await post('/init', { ext: target.ext ?? '' });
@@ -66,7 +74,7 @@ try {
   let browse = null;
   if (process.argv.includes('--browse')) {
     try {
-      const listing = await post('/category', { id: String(home.class[0].type_id), page: 1, pg: 1, filter: true, extend: {} });
+      const listing = await post('/category', { id: String(home.class[0].type_id), page: 1, pg: 1, filter: true, extend: {}, filters: {} });
       assert.ok(Array.isArray(listing.list) && listing.list.length > 0, '来源分类没有返回作品');
       const selected = listing.list[0];
       const details = await post('/detail', { id: [String(selected.vod_id)] });

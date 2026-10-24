@@ -72,6 +72,7 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('topSafeHeight', 0)
     AppStorage.setOrCreate('bottomSafeHeight', 0)
     AppStorage.setOrCreate('screenWidthVp', 360)
+    AppStorage.setOrCreate('menuViewportWidthVp', 360)
     AppStorage.setOrCreate('screenHeightVp', 720)
     AppStorage.setOrCreate('appInForeground', true)
     AppStorage.setOrCreate('playerFullScreen', false)
@@ -168,6 +169,10 @@ export default class EntryAbility extends UIAbility {
     const height = current.height / this.density
     AppStorage.setOrCreate('screenWidthVp', Math.min(width, height))
     AppStorage.setOrCreate('screenHeightVp', Math.max(width, height))
+    try {
+      const windowWidth = mainWindow.getWindowProperties().windowRect.width / this.density
+      AppStorage.setOrCreate('menuViewportWidthVp', Number.isFinite(windowWidth) && windowWidth > 0 ? windowWidth : Math.min(width, height))
+    } catch (_) { AppStorage.setOrCreate('menuViewportWidthVp', Math.min(width, height)) }
     try {
       const area = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
       AppStorage.setOrCreate('topSafeHeight', area.topRect.height / this.density)

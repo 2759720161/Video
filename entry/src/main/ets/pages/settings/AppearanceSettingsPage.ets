@@ -75,7 +75,7 @@ struct AppearanceSettingsPage {
         }.width('100%').height(64).padding({ left: 16, right: 16 })
       }.width('100%').borderRadius(12).clip(true).backgroundColor($r('app.color.card_background'))
         .border({ width: 0.5, color: $r('app.color.card_specular_border') }).shadow({ radius: 10, color: $r('app.color.shadow_surface'), offsetY: 3 })
-      Text('光感等级调整页面导航栏；材质厚度调整详情弹层和播放、选择按钮的通透程度。')
+      Text('光感等级调整页面导航栏；材质厚度调整分类标签、弹层和按钮的通透程度。')
         .fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
         .padding({ left: 12, right: 12, top: 8, bottom: 4 })
     }.width('100%').margin({ bottom: 8 })

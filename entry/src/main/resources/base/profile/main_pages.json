@@ -21,6 +21,7 @@
     "pages/settings/SubtitleSettingsPage",
     "pages/settings/AppearanceSettingsPage",
     "pages/settings/AboutPage",
-    "pages/catvod/CatNodeSourceEditPage"
+    "pages/catvod/CatNodeSourceEditPage",
+    "pages/catvod/CatNodeConfigurationPage"
   ]
 }

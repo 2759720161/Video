@@ -1,5 +1,59 @@
 {
   "string": [
+    { "name": "continue_watching_title", "value": "继续播放" },
+    { "name": "continue_watching_all_loaded", "value": "已加载全部内容" },
+    { "name": "continue_watching_source", "value": "播放来源：%s" },
+    { "name": "continue_watching_open_failed", "value": "无法打开继续播放，请重试" },
+    { "name": "continue_watching_loading", "value": "正在读取观看记录" },
+    { "name": "continue_watching_edit", "value": "管理观看记录" },
+    { "name": "player_episode_title", "value": "选集" },
+    { "name": "player_episode_count", "value": "共 %d 集" },
+    { "name": "player_episode_ascending", "value": "正序" },
+    { "name": "player_episode_descending", "value": "倒序" },
+    { "name": "player_episode_close", "value": "关闭选集" },
+    { "name": "player_episode_switching", "value": "正在切换播放" },
+    { "name": "player_episode_empty", "value": "暂无可用选集" },
+    {
+      "name": "continue_watching_preparing",
+      "value": "正在准备播放"
+    },
+    {
+      "name": "continue_watching_failed",
+      "value": "无法继续播放，请重试"
+    },
+    {
+      "name": "continue_watching_position",
+      "value": "看到 %s"
+    },
+    { "name": "cat_config_title", "value": "配置中心" },
+    { "name": "cat_config_loading", "value": "正在打开配置中心" },
+    { "name": "cat_config_unavailable", "value": "配置中心暂不可用" },
+    { "name": "cat_config_reload", "value": "刷新" },
+    { "name": "cat_config_exported", "value": "配置已导出" },
+    { "name": "cat_config_export_failed", "value": "配置导出失败，请重试" },
+    { "name": "cat_detail_play", "value": "立即播放" },
+    { "name": "cat_detail_locate", "value": "定位当前分集" },
+    { "name": "cat_detail_sort", "value": "切换选集排序" },
+    { "name": "cat_detail_information", "value": "作品信息" },
+    { "name": "cat_detail_more", "value": "更多" },
+    { "name": "cat_detail_refresh", "value": "刷新详情" },
+    { "name": "cat_detail_expand", "value": "展开简介" },
+    { "name": "cat_detail_collapse", "value": "收起简介" },
+    { "name": "cat_detail_synopsis", "value": "剧情简介" },
+    { "name": "cat_detail_no_synopsis", "value": "暂无简介" },
+    { "name": "cat_detail_road", "value": "播放线路" },
+    { "name": "cat_detail_episode_count", "value": "共 %d 集" },
+    { "name": "cat_detail_loading", "value": "正在读取作品" },
+    { "name": "cat_detail_unavailable", "value": "详情暂不可用" },
+    { "name": "cat_detail_source_unavailable", "value": "猫源不可用或已停用" },
+    { "name": "cat_detail_video_unavailable", "value": "该作品已不可用" },
+    { "name": "cat_detail_load_failed", "value": "读取作品失败" },
+    { "name": "cat_detail_empty_response", "value": "此条目暂未提供详情，可尝试搜索同名资源" },
+    { "name": "cat_detail_search_same_title", "value": "搜索同名资源" },
+    { "name": "cat_detail_search_failed", "value": "无法打开搜索，请重试" },
+    { "name": "cat_detail_play_failed", "value": "无法打开播放" },
+    { "name": "cat_home_refresh", "value": "刷新当前目录" },
+    { "name": "cat_home_cache_update_failed", "value": "更新失败，已保留上次的首页内容" },
     {
       "name": "catvod_source_intro",
       "value": "从天堂采集开始，浏览分类、搜索作品并选择分集。也可填写兼容的采集来源地址。"
@@ -251,6 +305,266 @@
     {
       "name": "cat_subscription_save_failed",
       "value": "订阅保存失败，请重试"
+    },
+    {
+      "name": "media_search_title",
+      "value": "搜索"
+    },
+    {
+      "name": "media_search_action",
+      "value": "搜索"
+    },
+    {
+      "name": "media_search_placeholder",
+      "value": "片名、剧集或关键词"
+    },
+    {
+      "name": "media_search_current_source",
+      "value": "当前来源"
+    },
+    {
+      "name": "media_search_connect_failed",
+      "value": "无法连接当前来源，请重试"
+    },
+    {
+      "name": "media_search_show_more_results",
+      "value": "展开更多结果"
+    },
+    {
+      "name": "media_search_control_range",
+      "value": "范围"
+    },
+    {
+      "name": "media_search_control_short",
+      "value": "聚合"
+    },
+    {
+      "name": "media_search_control_on",
+      "value": "已开启"
+    },
+    {
+      "name": "media_search_control_off",
+      "value": "已关闭"
+    },
+    {
+      "name": "media_search_control_directory",
+      "value": "当前目录"
+    },
+    {
+      "name": "media_search_control_directory_count",
+      "value": "个目录"
+    },
+    {
+      "name": "media_search_control_choose",
+      "value": "选择目录"
+    },
+    {
+      "name": "media_search_scope_settings",
+      "value": "聚合搜索范围"
+    },
+    {
+      "name": "media_search_scope_hint",
+      "value": "仅搜索已选目录，至少保留一个。点击应用后生效。"
+    },
+    {
+      "name": "media_search_scope_filter",
+      "value": "筛选目录名称"
+    },
+    {
+      "name": "media_search_scope_selected",
+      "value": "已选"
+    },
+    {
+      "name": "media_search_scope_all",
+      "value": "全选"
+    },
+    {
+      "name": "media_search_scope_no_match",
+      "value": "没有匹配的目录"
+    },
+    {
+      "name": "media_search_scope_checked",
+      "value": "已选中"
+    },
+    {
+      "name": "media_search_scope_unchecked",
+      "value": "未选中"
+    },
+    {
+      "name": "media_search_scope_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "media_search_scope_saving",
+      "value": "保存中…"
+    },
+    {
+      "name": "media_search_scope_apply",
+      "value": "应用"
+    },
+    {
+      "name": "media_search_scope_minimum",
+      "value": "请在聚合搜索范围中选择至少一个目录"
+    },
+    {
+      "name": "media_search_scope_save_failed",
+      "value": "范围保存失败，请重试"
+    },
+    {
+      "name": "media_search_aggregate",
+      "value": "聚合搜索"
+    },
+    {
+      "name": "media_search_aggregate_running",
+      "value": "搜索目录"
+    },
+    {
+      "name": "media_search_aggregate_done",
+      "value": "本轮完成"
+    },
+    {
+      "name": "media_search_stop",
+      "value": "停止"
+    },
+    {
+      "name": "media_search_stopped",
+      "value": "已停止"
+    },
+    {
+      "name": "media_search_aggregate_failed",
+      "value": "失败或超时"
+    },
+    {
+      "name": "media_search_aggregate_unsupported",
+      "value": "不支持搜索"
+    },
+    {
+      "name": "media_search_aggregate_more",
+      "value": "继续搜索"
+    },
+    {
+      "name": "media_search_aggregate_retry",
+      "value": "重试并继续搜索"
+    },
+    {
+      "name": "media_search_scope",
+      "value": "搜索范围"
+    },
+    {
+      "name": "media_search_choose_directory",
+      "value": "切换搜索目录"
+    },
+    {
+      "name": "media_search_directory_unavailable",
+      "value": "当前目录未提供搜索功能，请点击搜索框下方的搜索范围，切换其他目录"
+    },
+    {
+      "name": "media_search_failed",
+      "value": "搜索失败，请重试"
+    },
+    {
+      "name": "media_search_page_failed",
+      "value": "加载失败，已保留当前结果"
+    },
+    {
+      "name": "media_search_history_failed",
+      "value": "搜索记录保存失败，请重试"
+    },
+    {
+      "name": "media_search_sort_title",
+      "value": "按名称"
+    },
+    {
+      "name": "media_search_sort_year",
+      "value": "按年份"
+    },
+    {
+      "name": "media_search_sort_default",
+      "value": "默认顺序"
+    },
+    {
+      "name": "media_search_related_history",
+      "value": "相关历史"
+    },
+    {
+      "name": "media_search_history",
+      "value": "搜索历史"
+    },
+    {
+      "name": "media_search_done",
+      "value": "完成"
+    },
+    {
+      "name": "media_search_manage",
+      "value": "管理"
+    },
+    {
+      "name": "media_search_clear",
+      "value": "清空"
+    },
+    {
+      "name": "media_search_delete_history",
+      "value": "删除搜索记录"
+    },
+    {
+      "name": "media_search_results",
+      "value": "搜索结果"
+    },
+    {
+      "name": "media_search_loaded",
+      "value": "已加载"
+    },
+    {
+      "name": "media_search_items",
+      "value": "项"
+    },
+    {
+      "name": "media_search_grid",
+      "value": "海报"
+    },
+    {
+      "name": "media_search_list",
+      "value": "列表"
+    },
+    {
+      "name": "media_search_loading",
+      "value": "正在搜索"
+    },
+    {
+      "name": "media_search_retry",
+      "value": "重试"
+    },
+    {
+      "name": "media_search_loading_more",
+      "value": "正在加载"
+    },
+    {
+      "name": "media_search_more",
+      "value": "加载更多"
+    },
+    {
+      "name": "media_search_connecting",
+      "value": "正在连接服务"
+    },
+    {
+      "name": "media_search_unavailable",
+      "value": "搜索暂不可用"
+    },
+    {
+      "name": "media_search_idle_title",
+      "value": "搜索你想看的内容"
+    },
+    {
+      "name": "media_search_idle_message",
+      "value": "输入片名或关键词，搜索上方显示的来源"
+    },
+    {
+      "name": "media_search_empty_title",
+      "value": "没有找到相关作品"
+    },
+    {
+      "name": "media_search_empty_message",
+      "value": "试试缩短关键词，或检查当前目录是否支持搜索"
     }
   ]
 }

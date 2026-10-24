@@ -1,4 +1,8 @@
-import { buildDetailToastOptions } from '../../utils/DetailMaterial'
+import { buildDetailToastOptions, buildDetailDialogOptions } from '../../utils/DetailMaterial'
+import { IMMERSIVE_STYLE_DEFAULT, PREFS_KEY_IMMERSIVE_MATERIAL_STYLE } from '../../utils/HdsPageStyle'
+import { PlayerEpisodePanel } from '../../components/player/PlayerEpisodePanel'
+import { PlayerEpisodePresentation } from '../../components/player/PlayerEpisodePresentation'
+import { ResumeFrameStore } from '../../services/media/ResumeFrameStore'
 import { PlayerSurface, releaseRetainedPlayerSession } from '../../components/player/PlayerSurface'
 import { GestureLayer } from '../../components/player/GestureLayer'
 import { PlayerMorePanel } from '../../components/player/PlayerMorePanel'
@@ -14,6 +18,7 @@ import { DanmakuSettingsPanelContent } from '../../components/player/DanmakuSett
 import { DanmakuSettingsSidePanel } from '../../components/player/DanmakuSettingsSidePanel'
 import { AspectModePanel } from '../../components/player/AspectModePanel'
 import { PlaybackQueueItem } from '../../core/playback/PlaybackQueueItem'
+import { PlaybackQueueGroup } from '../../core/playback/PlaybackQueueGroup'
 import { PlaybackVariant } from '../../core/playback/PlaybackVariant'
 import { PlaybackSession } from '../../core/playback/PlaybackSession'
 import { PlaybackSubtitle } from '../../core/playback/PlaybackSubtitle'
@@ -136,6 +141,7 @@ struct PlayerPage {
   @State volume: number = 1.0
   private playerEngine: IPlayerEngine | null = null
   private xComponentController: XComponentController | null = null
+  private continueFrameVideo: string = ''
   private pendingQueueTargetUri: string = ''
   private pendingQueueStartPositionMs: number = 0
   private queueSwitchSawPreparing: boolean = false
@@ -160,8 +166,15 @@ struct PlayerPage {
   @State subtitleMenuSelectionKey: string = 'off'
   private externalSubtitleCues: ExternalSubtitleCue[] = []
   @State playbackQueue: PlaybackQueueItem[] = []
+  @State private episodeGroups: PlaybackQueueGroup[] = []
   @State currentQueueIndex: number = -1
   @State showPlaybackQueue: boolean = false
+  @StorageLink(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE) materialThickness: string = IMMERSIVE_STYLE_DEFAULT
+  @State private episodeSwitching: boolean = false
+  @State private queuePanelError: string = ''
+  private episodeDialog: CustomDialogController | null = null
+  private episodeDialogGeneration: number = 0
+  private episodeDialogLandscape: boolean = false
   @State showHud: boolean = false
   @State hudText: string = ''
   @State playbackErrorText: string = ''
@@ -298,7 +311,8 @@ struct PlayerPage {
 
     if (this.videoUri.length > 0) {
       this.ensurePlaybackQueueForCurrentVideo()
-      void this.refreshPlaybackQueue()
+      // Source-provided groups already contain the full queue from the same detail snapshot.
+      if (this.episodeGroups.length === 0) void this.refreshPlaybackQueue()
       const options = this.withPlaybackIdentity(
         PlaybackOptionsAdapter.fromStream(this.session!.stream, this.historySeekMs)
       )
@@ -332,6 +346,7 @@ struct PlayerPage {
 
   aboutToDisappear(): void {
     this.pageVisible = false
+    this.closePlaybackQueue()
     this.queueResolveToken++
     if (this.session === null) {
       this.isPageAlive = false
@@ -358,6 +373,7 @@ struct PlayerPage {
     }
     this.syncActiveSession()
     if (!this.handedToTypeNodePiP) {
+      this.captureContinueFrame()
       this.stopPlaybackReport()
       this.sessionManager.release(this.sessionId)
     }
@@ -432,6 +448,10 @@ struct PlayerPage {
   }
 
   private handleBackFromPlayer(): boolean {
+    if (this.showPlaybackQueue) {
+      this.closePlaybackQueue()
+      return true
+    }
     if (this.isAnimatingFullscreen) {
       return true
     }
@@ -484,6 +504,7 @@ struct PlayerPage {
     if (this.handleBackFromPlayer()) {
       return
     }
+    this.captureContinueFrame()
     router.back()
   }
 
@@ -591,6 +612,7 @@ struct PlayerPage {
       ? Math.min(normalizedStartPositionMs, this.durationMs) : normalizedStartPositionMs
     this.positionMs = this.historySeekMs
     this.playbackQueue = session.queue
+    this.episodeGroups = Array.isArray(session.episodeGroups) ? session.episodeGroups : []
     this.currentQueueIndex = session.queueIndex
     if (this.currentQueueIndex >= 0 && this.currentQueueIndex < this.playbackQueue.length) {
       // startFromBeginning 只影响本次打开；之后切回该条目应使用最新播放进度。
@@ -664,7 +686,8 @@ struct PlayerPage {
 
   /** 认证失败只为当前媒体重新解析一次，防止失效凭据造成无限重试。 */
   private retryStreamAfterAuthorizationFailure(errorText: string): void {
-    if (this.isLocalSource || !/(401|403|unauthori[sz]ed|forbidden)/i.test(errorText)) {
+    const cachedResourceFailure = this.session?.stream.reused === true && /\b(404|410)\b/.test(errorText)
+    if (this.isLocalSource || !cachedResourceFailure && !/(401|403|unauthori[sz]ed|forbidden)/i.test(errorText)) {
       return
     }
     const current = this.session
@@ -985,9 +1008,6 @@ struct PlayerPage {
         this.SpeedMenuOverlay()
       }
 
-      if (this.showPlaybackQueue) {
-        this.PlaybackQueueOverlay()
-      }
     }
     .width('100%')
     .height('100%')
@@ -1234,6 +1254,24 @@ struct PlayerPage {
 
   @Builder
   private PrimaryPlaybackControls(): void {
+    Column() {
+      if (!this.isFullScreen) this.PrimaryPlaybackButtons()
+      Stack({ alignContent: Alignment.Center }) {
+        if (this.isFullScreen) this.PrimaryPlaybackButtons()
+        Row() {
+          Blank().layoutWeight(1)
+          this.SpeedToolButton()
+          this.TopSymbolButton($r('sys.symbol.list_bullet'), this.episodePanelTitle(), () => this.openPlaybackQueue())
+          this.TopSymbolButton(
+            this.isFullScreen ? $r('sys.symbol.rectangle_portrait_rotate') : $r('sys.symbol.rectangle_rotate'),
+            this.isFullScreen ? '退出全屏' : '全屏', () => this.toggleFullScreen())
+        }.width('100%').height(44).alignItems(VerticalAlign.Center).hitTestBehavior(HitTestMode.Transparent)
+      }.width('100%').height(44)
+    }.width('100%').height(this.isFullScreen ? 50 : 94).padding({ left: 10, right: 10, bottom: 8 })
+  }
+
+  @Builder
+  private PrimaryPlaybackButtons(): void {
     Stack({ alignContent: Alignment.Center }) {
       // 主控组独立于右侧功能键，播放/暂停始终相对整条底栏居中。
       Row({ space: 6 }) {
@@ -1261,32 +1299,9 @@ struct PlayerPage {
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
 
-      // 竖屏将倍速置于左端，横屏仍与全屏按钮保持在右端；
-      // 中间主控独立于这条功能栏，始终相对整条底栏居中。
-      Row() {
-        if (!this.isFullScreen) {
-          this.SpeedToolButton()
-        }
-        Blank()
-          .layoutWeight(1)
-        if (this.isFullScreen) {
-          this.SpeedToolButton()
-        }
-        this.TopSymbolButton(
-          this.isFullScreen ? $r('sys.symbol.rectangle_portrait_rotate') : $r('sys.symbol.rectangle_rotate'),
-          this.isFullScreen ? '退出全屏' : '全屏', () => {
-          this.toggleFullScreen()
-        })
-      }
-      .width('100%')
-      .height(44)
-      .justifyContent(FlexAlign.End)
-      .alignItems(VerticalAlign.Center)
-      .hitTestBehavior(HitTestMode.Transparent)
     }
     .width('100%')
-    .height(50)
-    .padding({ left: 10, right: 10, bottom: 8 })
+    .height(44)
   }
 
   @Builder
@@ -2148,119 +2163,75 @@ struct PlayerPage {
     .width('100%')
   }
 
-  @Builder
-  private PlaybackQueueOverlay(): void {
-    Stack({ alignContent: Alignment.Bottom }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#88000000')
-        .onClick(() => {
-          this.showPlaybackQueue = false
-          this.startAutoHideTimer()
-        })
-
-      Column() {
-        Row() {
-          Text('当前播放')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .layoutWeight(1)
-          Text(this.getPlaybackQueueLabel())
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .margin({ right: 12 })
-          SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(20)
-            .fontColor([$r('sys.color.icon_secondary')])
-            .width(44)
-            .height(44)
-            .onClick(() => {
-              this.showPlaybackQueue = false
-              this.startAutoHideTimer()
-            })
-        }
-        .width('100%')
-        .height(48)
-        .alignItems(VerticalAlign.Center)
-
-        if (this.playbackQueue.length === 0) {
-          Text('当前视频没有可用的播放列表')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
-            .textAlign(TextAlign.Center)
-            .margin({ top: 54, bottom: 54 })
-        } else {
-          Scroll() {
-            Column({ space: 4 }) {
-              ForEach(this.playbackQueue, (item: PlaybackQueueItem, index: number) => {
-                this.PlaybackQueueItemRow(item, index)
-              }, (item: PlaybackQueueItem, index: number) => 'queue_' + index + '_' + item.sourceId + '_' + item.mediaId)
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .height(300)
-          .edgeEffect(EdgeEffect.Spring)
-          .scrollBar(BarState.Off)
-        }
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 12, bottom: this.bottomSafeHeight + 18 })
-      .backgroundColor($r('app.color.card_background'))
-      .borderRadius({ topLeft: 18, topRight: 18 })
-    }
-    .width('100%')
-    .height('100%')
-    .zIndex(28)
+  private episodePanelTitle(): string {
+    return this.getUIContext().getHostContext()!.resourceManager.getStringSync($r('app.string.player_episode_title').id)
   }
 
-  @Builder
-  private PlaybackQueueItemRow(item: PlaybackQueueItem, index: number): void {
-    Row({ space: 12 }) {
-      Text(String(index + 1))
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.isCurrentQueueItem(index) ? $r('app.color.accent_blue') : $r('app.color.text_secondary'))
-        .width(24)
-        .textAlign(TextAlign.Center)
-      Column() {
-        Text(item.title.length > 0 ? item.title : '本地视频')
-          .fontSize(15)
-          .fontWeight(this.isCurrentQueueItem(index) ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        if (item.positionMs > 0) {
-          Text('继续播放 ' + this.formatTime(item.positionMs))
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .margin({ top: 3 })
+  private openPlaybackQueue(): void {
+    if (!this.isPageAlive || !this.isPlayerControlActionAllowed() || this.showPlaybackQueue) return
+    this.showSpeedMenu = false; this.showAspectModePanel = false; this.showVariantSheet = false
+    this.queuePanelError = ''; this.showPlaybackQueue = true
+    this.isControlVisible = true; this.pauseAutoHideTimer()
+    const ticket = ++this.episodeDialogGeneration
+    this.episodeDialogLandscape = this.isFullScreen
+    try {
+      this.episodeDialog = new CustomDialogController(buildDetailDialogOptions(this.materialThickness, {
+        builder: PlayerEpisodePanel({ queue: $playbackQueue, groups: $episodeGroups, currentIndex: $currentQueueIndex,
+          busy: $episodeSwitching, error: $queuePanelError,
+          onSelect: (index: number) => { void this.selectQueueEpisode(index) },
+          onVariant: (id: string) => { void this.selectQueueVariant(id) },
+          onGroupSelect: (id: string, index: number) => { void this.selectQueueGroupEpisode(id, index) },
+          onClose: () => this.closePlaybackQueue() }),
+        customStyle: false, autoCancel: true, cornerRadius: 24,
+        alignment: this.isFullScreen ? DialogAlignment.CenterEnd : DialogAlignment.Bottom,
+        offset: { dx: this.isFullScreen ? -12 : 0, dy: this.isFullScreen ? 0 : -12 },
+        width: this.isFullScreen ? '44%' : '94%', height: this.isFullScreen ? '88%' : '62%',
+        maskColor: '#24000000', backgroundColor: $r('app.color.card_background'),
+        onDidDisappear: () => {
+          if (ticket !== this.episodeDialogGeneration) return
+          this.episodeDialog = null; this.showPlaybackQueue = false
+          if (this.isPageAlive && this.pageVisible) this.showControlsWithAutoHide()
         }
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      if (this.isCurrentQueueItem(index)) {
-        SymbolGlyph($r('sys.symbol.play_fill'))
-          .fontSize(16)
-          .fontColor([$r('app.color.accent_blue')])
-      }
+      }))
+      this.episodeDialog.open()
+    } catch (err) {
+      this.closePlaybackQueue()
+      logger.warn('Episode panel open failed: %{public}s', err instanceof Error ? err.message : String(err))
     }
-    .width('100%')
-    .height(58)
-    .padding({ left: 10, right: 10 })
-    .borderRadius(12)
-    .backgroundColor(this.isCurrentQueueItem(index) ? $r('app.color.button_ghost_bg') : Color.Transparent)
-    .alignItems(VerticalAlign.Center)
-    .onClick(() => {
-      this.playQueueItem(index, true)
-    })
   }
 
-  private isCurrentQueueItem(index: number): boolean {
-    return index === this.currentQueueIndex
+  private closePlaybackQueue(): void {
+    this.episodeDialogGeneration++
+    const dialog = this.episodeDialog
+    this.episodeDialog = null; this.showPlaybackQueue = false
+    dialog?.close()
+    if (this.isPageAlive && this.pageVisible) this.showControlsWithAutoHide()
+  }
+
+  private async selectQueueEpisode(index: number): Promise<void> {
+    if (!this.isPageAlive || !this.showPlaybackQueue || this.episodeSwitching ||
+      index < 0 || index >= this.playbackQueue.length) return
+    if (index === this.currentQueueIndex) { this.closePlaybackQueue(); return }
+    this.episodeSwitching = true; this.queuePanelError = ''
+    try { await this.playQueueItem(index, false) } finally { this.episodeSwitching = false }
+  }
+
+  private async selectQueueGroupEpisode(id: string, index: number): Promise<void> {
+    if (!this.isPageAlive || !this.showPlaybackQueue || this.episodeSwitching) return
+    const group = this.episodeGroups.find((value: PlaybackQueueGroup) => value.id === id)
+    if (group === undefined || index < 0 || index >= group.items.length) return
+    const item = group.items[index]; const current = this.currentQueueItem()
+    if (current !== null && current.mediaId === item.mediaId && current.sourceId === item.sourceId &&
+      current.variantId === item.variantId) { this.closePlaybackQueue(); return }
+    this.episodeSwitching = true; this.queuePanelError = ''
+    try { await this.playQueueItem(index, false, null, group.items) } finally { this.episodeSwitching = false }
+  }
+
+  private async selectQueueVariant(id: string): Promise<void> {
+    if (!this.isPageAlive || !this.showPlaybackQueue || this.episodeSwitching ||
+      !this.currentPlaybackVariantSources().some((variant: PlaybackVariant) => variant.id === id)) return
+    this.episodeSwitching = true; this.queuePanelError = ''
+    try { await this.selectPlaybackVariant(id) } finally { this.episodeSwitching = false }
   }
 
   private currentQueueItem(): PlaybackQueueItem | null {
@@ -2312,12 +2283,9 @@ struct PlayerPage {
       this.showVariantSheet = false
       return
     }
-    item.positionMs = PlaybackQueueItem.normalizePositionMs(this.positionMs)
-    item.startFromBeginning = false
-    item.variantId = selectedId
-    item.trackSelection = null
+    const requested = PlayerEpisodePresentation.withVariant(item, selectedId, this.positionMs)
     this.showVariantSheet = false
-    await this.playQueueItem(this.currentQueueIndex, false)
+    await this.playQueueItem(this.currentQueueIndex, false, requested)
   }
 
   @Builder
@@ -2471,7 +2439,7 @@ struct PlayerPage {
   }
 
   private shouldDisablePlayerGestures(): boolean {
-    return this.showSpeedMenu || this.showAspectModePanel || this.showDanmakuSettingsPanel ||
+    return this.showPlaybackQueue || this.showSpeedMenu || this.showAspectModePanel || this.showDanmakuSettingsPanel ||
       this.showDanmakuSettingsSheet || this.showDanmakuManageSheet || this.showDanmakuLoadDialog ||
       this.showDanmakuOffsetPanel
   }
@@ -3853,6 +3821,18 @@ struct PlayerPage {
     return true
   }
 
+  private captureContinueFrame(): void {
+    if (this.isLocalSource || this.session === null || this.xComponentController === null ||
+      !this.hasEngine || this.videoWidth <= 0 || this.positionMs <= 0 || this.continueFrameVideo === this.videoUri) return
+    try {
+      const position = this.playerEngine?.getState().positionMs ?? this.positionMs
+      this.continueFrameVideo = this.videoUri
+      void ResumeFrameStore.capture(this.getUIContext().getHostContext() as common.UIAbilityContext,
+        this.session.media.sourceId, this.session.media.mediaId,
+        this.xComponentController.getXComponentSurfaceId(), position > 0 ? position : this.positionMs)
+    } catch (_) { logger.warn('Exit frame unavailable; keeping existing cover') }
+  }
+
   private stopPlaybackBeforeLeaving(): void {
     this.isPlaying = false
     if (this.playerEngine !== null) {
@@ -4289,6 +4269,8 @@ struct PlayerPage {
     if (width <= 0 || height <= 0) {
       return
     }
+    if (this.showPlaybackQueue && Math.abs(width - height) > 1 &&
+      (width > height) !== this.episodeDialogLandscape) this.closePlaybackQueue()
     if (this.followSystemOrientationOnOpen && Math.abs(width - height) > 1) {
       const landscape = width > height
       if (this.isFullScreen !== landscape) {
@@ -4606,6 +4588,7 @@ struct PlayerPage {
 
   private startAutoHideTimer(): void {
     this.pauseAutoHideTimer()
+    if (this.showPlaybackQueue) return
     this.controlHideTimer = setTimeout(() => {
       this.isControlVisible = false
     }, 5000)
@@ -4945,11 +4928,18 @@ struct PlayerPage {
     await this.playQueueItem(nextIndex, autoPlay)
   }
 
-  private async playQueueItem(index: number, autoPlay: boolean): Promise<void> {
-    if (!this.isPageAlive || this.handedToTypeNodePiP || index < 0 || index >= this.playbackQueue.length) {
+  private async playQueueItem(index: number, autoPlay: boolean,
+    requestedItem: PlaybackQueueItem | null = null, requestedQueue: PlaybackQueueItem[] | null = null): Promise<void> {
+    const queue = requestedQueue ?? this.playbackQueue
+    if (!this.isPageAlive || this.handedToTypeNodePiP || index < 0 || index >= queue.length) {
       return
     }
-    const item = this.playbackQueue[index]
+    // Providers may mutate the request during resolution. Keep the active queue immutable until success.
+    const target = requestedItem ?? queue[index]
+    if (target.sourceId !== queue[index].sourceId || target.mediaId !== queue[index].mediaId ||
+      target.sourceId !== this.session?.media.sourceId) return
+    const item = PlayerEpisodePresentation.withVariant(target, target.variantId, target.positionMs)
+    item.startFromBeginning = target.startFromBeginning; item.trackSelection = target.trackSelection
     const resolver = this.sessionManager.getResolver(this.sessionId)
     if (resolver === null || this.session === null) return
     const token = ++this.queueResolveToken
@@ -4968,6 +4958,7 @@ struct PlayerPage {
       }
     } catch (err) {
       if (this.isPageAlive && token === this.queueResolveToken) {
+        if (this.showPlaybackQueue) this.queuePanelError = err instanceof Error ? err.message : '视频暂时不可访问'
         this.showHudText(err instanceof Error ? err.message : '视频暂时不可访问')
       }
       return
@@ -4981,7 +4972,9 @@ struct PlayerPage {
     if (!this.isPageAlive || token !== this.queueResolveToken || this.sessionManager.get(this.sessionId) === null) return
     const startPositionMs = this.normalizeResumePosition(next.startPositionMs, next.durationMs)
     next.id = this.sessionId
-    next.queue = this.playbackQueue
+    const nextQueue = queue.slice()
+    nextQueue[index] = item
+    next.queue = nextQueue
     next.queueIndex = index
     next.startPositionMs = startPositionMs
     this.sessionManager.update(next)
@@ -4990,7 +4983,7 @@ struct PlayerPage {
     this.pendingQueueTargetUri = next.stream.url
     this.pendingQueueStartPositionMs = startPositionMs
     this.queueSwitchSawPreparing = false
-    this.showPlaybackQueue = false
+    this.closePlaybackQueue()
     this.positionMs = 0
     this.durationMs = 0
     this.lastKnownPositionMs = startPositionMs
@@ -5025,6 +5018,7 @@ struct PlayerPage {
     )
     this.syncPlaybackSessionMedia()
     this.showHudText(autoPlay ? '正在播放下一项' : '已切换视频')
+    if (requestedItem !== null) void this.refreshPlaybackQueue()
   }
 
   private captureCurrentQueueProgress(): void {

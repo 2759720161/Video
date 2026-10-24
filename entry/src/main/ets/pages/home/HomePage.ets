@@ -10,15 +10,16 @@ import { WebDavHomeContent } from './WebDavHomeContent'
 import { CatVodContent } from '../catvod/CatVodContent'
 import { CatVodHomeTitle } from '../catvod/CatVodHomeTitle'
 import { CatVodHomeNavigation } from '../catvod/CatVodHomeNavigation'
+import { HomeHeroSyncTrace } from '../../services/media/HomeHeroSyncTrace'
 import { CatNodeSite } from '../../providers/catvod/CatNodeRuntime'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
-import { buildDetailSheetMaterial } from '../../utils/DetailMaterial'
+import { SourceMenuEntry, SourceSelectionMenu } from '../../components/common/SourceSelectionMenu'
+import { buildSourceSelectionMenuOptions } from '../../utils/SourceSelectionMenuStyle'
 import { UserDownloadFolder } from '../../services/UserDownloadFolder'
 import { LOCAL_MEDIA_LIBRARY_VERSION_KEY } from '../../store/LocalMediaLibraryChangeSignal'
 import {
   buildImmersiveTitleBarStyle,
-  buildHeroTitleBarStyle,
   getTopSpacerHeight,
   getBottomSpacerHeight,
   HDS_MATERIAL_LEVEL_DEFAULT,
@@ -38,6 +39,7 @@ export struct HomePage {
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink('screenWidthVp') screenWidth: number = 360
+  @StorageLink('menuViewportWidthVp') menuViewportWidth: number = 360
   @StorageLink(PREFS_KEY_HDS_MATERIAL_LEVEL) hdsMaterialLevel: string = HDS_MATERIAL_LEVEL_DEFAULT
   @StorageLink(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE) materialThickness: string = IMMERSIVE_STYLE_DEFAULT
   @State private sources: MediaSourceInstance[] = []
@@ -123,7 +125,9 @@ export struct HomePage {
             } else if (source.providerType === 'catvod' || source.providerType === 'catnode') {
               CatVodContent({ source: source, isActive: this.isActive, scroller: this.activeScroller(),
                 refreshToken: this.refreshToken, embeddedHomeTitle: true,
-                onNavigationChanged: (state: CatVodHomeNavigation) => this.onCatNavigationChanged(state) })
+                onNavigationChanged: (state: CatVodHomeNavigation) => this.onCatNavigationChanged(state),
+                onHeroSurfaceChanged: (id: string, updatedAt: number, color: string) =>
+                  this.onCatSurfaceChanged(id, updatedAt, color) })
             } else {
               LibraryPage({ isActive: this.isActive, embedded: true, scroller: this.activeScroller(),
                 refreshToken: this.refreshToken })
@@ -136,9 +140,9 @@ export struct HomePage {
         .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
       // Non-interactive anchor: the visible trigger is the native HDS title-menu icon.
       Column().width(44).height(44).backgroundColor(Color.Transparent)
-        .position({ x: Math.max(0, this.screenWidth - 112), y: this.topSafeHeight + 6 })
+        .position({ x: Math.max(0, this.menuViewportWidth - 112), y: this.topSafeHeight + 6 })
         .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
-        .bindMenu(this.showSourceMenu, this.sourceMenuItems(), this.sourceMenuOptions())
+        .bindMenu(this.showSourceMenu, this.ServiceSourceMenu(), this.sourceMenuOptions())
     }.width('100%').height(LayoutPolicy.matchParent)
       .linearGradient({
         direction: GradientDirection.Bottom,
@@ -147,15 +151,12 @@ export struct HomePage {
           [this.homeBackground(false), 0.35],
           [this.homeBackground(false), 1]
         ]
-      }).animation({ duration: 500, curve: Curve.EaseInOut })
+      })
   }
 
   private titleOptions(): HdsNavigationTitleBarOptions {
     const options: HdsNavigationTitleBarOptions = {
-      style: this.selectedSource()?.providerType === 'emby' ||
-        (this.isCatSource() && this.catNavigation.sourceId === this.selectedId && this.catNavigation.heroVisible)
-        ? buildHeroTitleBarStyle(this.hdsMaterialLevel)
-        : buildImmersiveTitleBarStyle(this.hdsMaterialLevel),
+      style: buildImmersiveTitleBarStyle(this.hdsMaterialLevel),
       content: {
         title: {
           mainTitle: '首页'
@@ -189,6 +190,14 @@ export struct HomePage {
     this.catNavigation = state
   }
 
+  private onCatSurfaceChanged(sourceId: string, updatedAt: number, color: string): void {
+    const source = this.selectedSource()
+    if (!this.isActive || !this.isCatSource() || source?.id !== sourceId || source.updatedAt !== updatedAt ||
+      this.catNavigation.sourceId !== sourceId || !this.catNavigation.heroVisible) return
+    this.catNavigation.heroSurface = /^#[0-9a-f]{6}$/i.test(color) ? color : ''
+    HomeHeroSyncTrace.applied('cat', 'home', this.catNavigation.heroSurface)
+  }
+
   private homeBackground(top: boolean): ResourceColor {
     const source = this.selectedSource()
     if (!this.loading && this.error.length === 0 && source?.providerType === 'emby' &&
@@ -205,6 +214,7 @@ export struct HomePage {
     if (!this.isActive || source?.providerType !== 'emby' || source.id !== sourceId || source.updatedAt !== updatedAt) return
     this.embyBackgroundSource = sourceId; this.embyBackgroundUpdatedAt = updatedAt
     this.embyBackgroundColor = /^#[0-9a-f]{6}$/i.test(color) ? color : ''
+    HomeHeroSyncTrace.applied('emby', 'home', this.embyBackgroundColor)
   }
 
   private catTitleSites(): CatNodeSite[] {
@@ -231,7 +241,7 @@ export struct HomePage {
 
   private async selectCatSite(key: string): Promise<void> {
     const source = this.selectedSource()
-    if (!this.isActive || source === undefined || this.catSelecting || key === this.catTitleKey() ||
+    if (!this.isActive || source === undefined || this.catSelecting || (key === this.catTitleKey() && key !== 'baseset') ||
       !this.catTitleSites().some((site: CatNodeSite) => site.key === key)) return
     if (source.providerType !== 'catnode') { await this.select(key); return }
     const navigation = this.catNavigation
@@ -239,7 +249,10 @@ export struct HomePage {
     const selectionGeneration = ++this.catSelectionGeneration
     this.catSelecting = true
     try {
-      await navigation.provider.selectSite(key)
+      if (key === 'baseset') {
+        await this.getUIContext().getRouter().pushUrl({ url: 'pages/catvod/CatNodeConfigurationPage',
+          params: { sourceId: source.id } })
+      } else await navigation.provider.selectSite(key)
       // Source-store updates remount the content with the persisted selection.
     } catch (error) {
       if (this.isActive && this.selectedId === source.id && selectionGeneration === this.catSelectionGeneration) {
@@ -258,7 +271,8 @@ export struct HomePage {
         busy: this.catSelecting || (this.selectedSource()?.providerType === 'catnode' &&
           (this.catNavigation.sourceId !== this.selectedId || this.catNavigation.loading)),
         isActive: this.isActive, maxWidth: Math.max(100, Math.min(320, this.screenWidth - 160)),
-        onSelect: (key: string) => { void this.selectCatSite(key) } })
+        onSelect: (key: string) => { void this.selectCatSite(key) },
+        onRefresh: () => { if (this.isActive) this.refreshToken++ } })
     }.width('100%').height(56).padding({ left: 16, right: 128 })
       .justifyContent(FlexAlign.Start).hitTestBehavior(HitTestMode.Transparent)
   }
@@ -297,9 +311,9 @@ export struct HomePage {
     }.width('100%').height('100%')
   }
 
-  private sourceMenuItems(): MenuElement[] {
-    return this.selectableSources().map((source: MediaSourceInstance): MenuElement => ({
-      value: (source.id === this.selectedId ? '✓ ' : '') + source.name,
+  private sourceMenuItems(): SourceMenuEntry[] {
+    return this.selectableSources().map((source: MediaSourceInstance): SourceMenuEntry => ({
+      key: source.id, value: source.name,
       action: () => {
         this.showSourceMenu = false
         if (source.id !== this.selectedId) void this.select(source.id)
@@ -308,23 +322,18 @@ export struct HomePage {
   }
 
   private sourceMenuOptions(): MenuOptions {
-    const material = buildDetailSheetMaterial(this.materialThickness)
-    const options: MenuOptions = {
-      placement: Placement.BottomRight,
-      borderRadius: 22,
-      backgroundColor: material === undefined ? $r('app.color.card_background') : Color.Transparent,
-      onDisappear: () => { this.showSourceMenu = false }
-    }
-    if (material !== undefined) options.systemMaterial = material
-    return options
+    return buildSourceSelectionMenuOptions(this.materialThickness, Placement.BottomRight, () => { this.showSourceMenu = false })
+  }
+
+  @Builder
+  private ServiceSourceMenu(): void {
+    SourceSelectionMenu({ entries: this.sourceMenuItems(), selectedKey: this.selectedId, disabled: this.loading })
   }
 
   private handleSearchAction(): void {
-    if (this.selectedSource()?.providerType === 'emby') {
+    const type = this.selectedSource()?.providerType
+    if (type === 'emby' || type === 'catvod' || type === 'catnode') {
       void this.getUIContext().getRouter().pushUrl({ url: 'pages/home/SearchPage',
-        params: { sourceId: this.selectedId } })
-    } else if (this.selectedSource()?.providerType === 'catvod' || this.selectedSource()?.providerType === 'catnode') {
-      void this.getUIContext().getRouter().pushUrl({ url: 'pages/catvod/CatVodBrowserPage',
         params: { sourceId: this.selectedId } })
     } else if (!this.hasServices) void this.reloadSources()
     else this.refreshToken++

@@ -3,8 +3,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const { createArtworkProxy } = require('./artwork.cjs');
 
 function createHost(root, notify = () => {}) {
+  const artwork = createArtworkProxy();
   const profilePath = path.join(root, 'profile.json');
   const playbackPath = path.join(root, 'playback.json');
   const token = crypto.randomBytes(24).toString('hex');
@@ -109,7 +111,9 @@ function createHost(root, notify = () => {}) {
     process.env.DEV_HTTP_PORT = '0';
     globalThis.catDartServerPort = () => server.address()?.port || 0;
     globalThis.catServerFactory = handler => {
-      engineServer = http.createServer(handler);
+      engineServer = http.createServer((request, response) => {
+        if (!artwork.handle(request, response)) handler(request, response);
+      });
       return engineServer;
     };
     try {
@@ -130,6 +134,7 @@ function createHost(root, notify = () => {}) {
   async function stop(notifyStopped = true) {
     if (stopping) return;
     stopping = true;
+    artwork.close();
     for (const pending of requests.values()) { clearTimeout(pending.timer); pending.resolve({ success: false, code: -1 }); }
     requests.clear();
     try { if (typeof engine?.stop === 'function') await engine.stop(); }

@@ -1,6 +1,7 @@
 import { PlaybackMedia } from './PlaybackMedia'
 import { PlaybackStream } from './PlaybackStream'
 import { PlaybackQueueItem } from './PlaybackQueueItem'
+import { PlaybackQueueGroup } from './PlaybackQueueGroup'
 import { PlaybackSubtitle } from './PlaybackSubtitle'
 
 /** 进程内的播放启动会话，与系统媒体控制使用的状态快照分离。 */
@@ -9,6 +10,7 @@ export class PlaybackSession {
   media: PlaybackMedia = new PlaybackMedia()
   stream: PlaybackStream = new PlaybackStream()
   queue: PlaybackQueueItem[] = []
+  episodeGroups: PlaybackQueueGroup[] = []
   queueIndex: number = -1
   subtitles: PlaybackSubtitle[] = []
   startPositionMs: number = 0

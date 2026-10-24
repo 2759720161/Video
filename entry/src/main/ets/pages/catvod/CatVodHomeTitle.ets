@@ -1,5 +1,6 @@
 import { CatNodeSite } from '../../providers/catvod/CatNodeRuntime'
-import { buildDetailSheetMaterial } from '../../utils/DetailMaterial'
+import { SourceMenuEntry, SourceSelectionMenu } from '../../components/common/SourceSelectionMenu'
+import { buildSourceSelectionMenuOptions } from '../../utils/SourceSelectionMenuStyle'
 import { IMMERSIVE_STYLE_DEFAULT, PREFS_KEY_IMMERSIVE_MATERIAL_STYLE } from '../../utils/HdsPageStyle'
 
 @Component
@@ -13,6 +14,7 @@ export struct CatVodHomeTitle {
   @StorageLink(PREFS_KEY_IMMERSIVE_MATERIAL_STYLE) materialThickness: string = IMMERSIVE_STYLE_DEFAULT
   @State private showMenu: boolean = false
   onSelect: (key: string) => void = () => {}
+  onRefresh: () => void = () => {}
 
   aboutToDisappear(): void { this.showMenu = false }
   private onActiveChanged(): void { if (!this.isActive) this.showMenu = false }
@@ -40,36 +42,19 @@ export struct CatVodHomeTitle {
 
   @Builder
   private SourceMenu(): void {
-    Menu() {
-      ForEach(this.sites, (site: CatNodeSite) => {
-        MenuItem(this.SourceRow(site))
-          .selected(site.key === this.selectedKey)
-          .selectIcon(false)
-          .enabled(!this.busy)
-          .onClick(() => { this.showMenu = false; this.onSelect(site.key) })
-      }, (site: CatNodeSite) => site.key)
-    }.width(260).borderRadius(28)
+    SourceSelectionMenu({ entries: this.menuEntries(), selectedKey: this.selectedKey, disabled: this.busy })
   }
 
-  @Builder
-  private SourceRow(site: CatNodeSite): void {
-    Row({ space: 14 }) {
-      Text(site.name).fontSize(17)
-        .fontWeight(site.key === this.selectedKey ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(site.key === this.selectedKey ? $r('app.color.accent_blue') : $r('app.color.text_primary')).layoutWeight(1)
-        .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-    }.width('100%').constraintSize({ minHeight: 54 })
-      .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+  private menuEntries(): SourceMenuEntry[] {
+    const entries = this.sites.map((site: CatNodeSite): SourceMenuEntry => ({
+      key: site.key, value: site.name, action: () => { this.showMenu = false; this.onSelect(site.key) }
+    }))
+    entries.push({ key: '/refresh-home', value: $r('app.string.cat_home_refresh'),
+      action: () => { this.showMenu = false; this.onRefresh() } })
+    return entries
   }
 
   private menuOptions(): MenuOptions {
-    const material = buildDetailSheetMaterial(this.materialThickness)
-    const options: MenuOptions = {
-      placement: Placement.BottomLeft, borderRadius: 28,
-      backgroundColor: material === undefined ? $r('app.color.card_background') : Color.Transparent,
-      onDisappear: () => { this.showMenu = false }
-    }
-    if (material !== undefined) options.systemMaterial = material
-    return options
+    return buildSourceSelectionMenuOptions(this.materialThickness, Placement.BottomLeft, () => { this.showMenu = false })
   }
 }

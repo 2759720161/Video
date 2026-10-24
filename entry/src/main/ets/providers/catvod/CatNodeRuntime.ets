@@ -2,10 +2,15 @@ import { common } from '@kit.AbilityKit'
 import { fileIo } from '@kit.CoreFileKit'
 import { http } from '@kit.NetworkKit'
 import { promptAction } from '@kit.ArkUI'
+import { hilog } from '@kit.PerformanceAnalysisKit'
 import type { CatNodeNative } from 'libcatnode_napi.so'
 import { CatVodCodec } from './CatVodCodec'
+import { CatNodeRequestControl } from './CatNodeRequestControl'
 import { CatNodeSubscription, CatNodeSubscriptionCodec, CatNodeSubscriptionStage } from './CatNodeSubscription'
 import { buildDetailToastOptions } from '../../utils/DetailMaterial'
+import { CatPlaybackPreparationCache } from './CatPlaybackPreparationCache'
+import { CatPlaybackSnapshotStore } from './CatPlaybackSnapshotStore'
+import { CatPlaybackStreamCache } from './CatPlaybackStreamCache'
 
 export class CatNodeAddress {
   port: number = 0
@@ -13,6 +18,8 @@ export class CatNodeAddress {
   token: string = ''
   nodeVersion: string = ''
   wasm: boolean = false
+  dataRoot: string = ''
+  bundleSha256: string = ''
   baseUrl(): string { return 'http://127.0.0.1:' + this.port }
 }
 
@@ -20,8 +27,14 @@ export class CatNodeSite {
   key: string = ''
   name: string = ''
   type: number = 3
+  api: string = ''
   ext: Object = ''
+  searchable: boolean = true
+  indexOnly: boolean = false
 }
+
+/** The local server explicitly rejected this exact method/path, rather than an upstream resource. */
+export class CatNodeRouteNotFoundError extends Error {}
 
 interface CatNodeNativeModule { default: CatNodeNative }
 
@@ -38,6 +51,8 @@ export class CatNodeRuntime {
   private static generation: number = 0
   private static subscriptionUrl: string = ''
   private static selection: Promise<void> = Promise.resolve()
+  private static dataRoot: string = ''
+  private static bundleSha256: string = ''
 
   static ensure(context: common.Context, md5Url: string = '',
     onStage: (stage: CatNodeSubscriptionStage) => void = () => {}): Promise<CatNodeAddress> {
@@ -76,11 +91,12 @@ export class CatNodeRuntime {
     onStage: (stage: CatNodeSubscriptionStage) => void): Promise<void> {
     const bundle = await CatNodeSubscription.prepare(context, md5Url, onStage)
     if (generation !== CatNodeRuntime.generation) throw new Error('Cat 订阅启动已取消')
+    CatNodeRuntime.dataRoot = bundle.root; CatNodeRuntime.bundleSha256 = bundle.sha256
     onStage(CatNodeSubscriptionStage.STARTING)
     const root = bundle.root
     const scripts = root + '/program'
     if (!fileIo.accessSync(scripts)) fileIo.mkdirSync(scripts, true)
-    const names = ['host.cjs', 'bootstrap.cjs']
+    const names = ['host.cjs', 'bootstrap.cjs', 'artwork.cjs']
     for (let i = 0; i < names.length; i++) {
       const bytes = await context.resourceManager.getRawFileContent('catnode/' + names[i])
       if (generation !== CatNodeRuntime.generation) throw new Error('猫源启动已取消')
@@ -116,6 +132,7 @@ export class CatNodeRuntime {
         CatNodeRuntime.hostAddress = host
       } else if (type === 'ready') {
         const address = new CatNodeAddress()
+        address.dataRoot = CatNodeRuntime.dataRoot; address.bundleSha256 = CatNodeRuntime.bundleSha256
         address.port = Number(event['port']); address.hostPort = Number(event['hostPort'])
         address.token = CatVodCodec.text(event['token']); address.nodeVersion = CatVodCodec.text(event['nodeVersion'])
         address.wasm = event['wasm'] === true
@@ -154,12 +171,19 @@ export class CatNodeRuntime {
   }
 
   private static fail(error: Error): void {
+    CatPlaybackPreparationCache.clear()
     if (CatNodeRuntime.timeout >= 0) clearTimeout(CatNodeRuntime.timeout)
     CatNodeRuntime.timeout = -1
     CatNodeRuntime.address = null
     CatNodeRuntime.hostAddress = null
     CatNodeRuntime.rejectReady?.(error)
     CatNodeRuntime.resolveReady = null; CatNodeRuntime.rejectReady = null; CatNodeRuntime.pending = null
+  }
+
+  static invalidatePlaybackMetadata(): void {
+    CatPlaybackPreparationCache.clear()
+    CatPlaybackSnapshotStore.invalidate(CatNodeRuntime.dataRoot)
+    CatPlaybackStreamCache.invalidate(CatNodeRuntime.dataRoot)
   }
 
   static async sites(context: common.Context, md5Url: string = '',
@@ -179,10 +203,14 @@ export class CatNodeRuntime {
     for (let i = 0; i < values.length; i++) {
       const value = CatVodCodec.object(values[i])
       if (value === null) continue
+      if (value['enable'] === false || CatVodCodec.text(value['enable']) === '0' ||
+        CatVodCodec.text(value['enable']) === 'false') continue
       const site = new CatNodeSite()
       site.name = CatVodCodec.text(value['name'])
       site.type = Number(value['type']); site.ext = value['ext'] ?? ''
-      // The config key is nodejs_<key>, but HTTP routes use the underlying key.
+      site.searchable = value['searchable'] !== false && CatVodCodec.text(value['searchable']) !== '0'
+      site.indexOnly = value['indexs'] === true || CatVodCodec.text(value['indexs']) === '1'
+      // Keep the config API intact; the key is a stable identity, not an API prefix.
       let api = CatVodCodec.text(value['api'])
       if (api.startsWith(baseUrl + '/spider/')) api = api.substring(baseUrl.length)
       const route = api.match(/^\/spider\/([^/]+)\/(\d+)$/)
@@ -190,6 +218,7 @@ export class CatNodeRuntime {
       try { site.key = decodeURIComponent(route[1]) } catch (_) { continue }
       if (site.key.length > 0 && !/[\\/?#\u0000-\u001f]/.test(site.key) && site.name.length > 0 &&
         Number.isInteger(site.type) && site.type >= 0 && site.type < 10 && Number(route[2]) === site.type && !seen.has(site.key)) {
+        site.api = api
         sites.push(site); seen.add(site.key)
       }
     }
@@ -204,6 +233,7 @@ export class CatNodeRuntime {
   }
 
   static async shutdown(): Promise<void> {
+    CatPlaybackPreparationCache.clear()
     if (CatNodeRuntime.stopping !== null) return CatNodeRuntime.stopping
     const stopping = CatNodeRuntime.stopEngine()
     CatNodeRuntime.stopping = stopping
@@ -233,8 +263,15 @@ export class CatNodeRuntime {
     }
   }
 
-  static async request(url: string, body: Record<string, Object> | null, token: string = ''): Promise<string> {
+  static async request(url: string, body: Record<string, Object> | null, token: string = '',
+    control: CatNodeRequestControl | null = null): Promise<string> {
+    control?.check()
     const request = http.createHttp()
+    let destroyed = false
+    const destroy = (): void => { if (!destroyed) { destroyed = true; request.destroy() } }
+    control?.onCancel(destroy)
+    const route = url.match(/\/(config|init|home|category|detail|search|play|stop|playback|host-reply)(?:[?#]|$)/)?.[1] ?? 'other'
+    const startedAt = Date.now()
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' }
       if (token.length > 0) headers['X-Video-Token'] = token
@@ -244,10 +281,41 @@ export class CatNodeRuntime {
         expectDataType: http.HttpDataType.STRING, connectTimeout: 10000, readTimeout: 30000,
         maxLimit: 8 * 1024 * 1024, usingCache: false
       })
+      control?.check()
+      hilog.info(0, 'CatNodeHttp', 'response route=%{public}s status=%{public}d elapsedMs=%{public}d chars=%{public}d',
+        route, response.responseCode, Date.now() - startedAt, typeof response.result === 'string' ? response.result.length : 0)
       if (response.responseCode < 200 || response.responseCode >= 300 || typeof response.result !== 'string') {
-        throw new Error('来源请求失败（HTTP ' + response.responseCode + '）')
+        const missingPath = body === null ? '' : url.match(/^http:\/\/127\.0\.0\.1:\d+(\/spider\/[^?#]+)$/)?.[1] ?? ''
+        const error = CatNodeRuntime.responseError(response.responseCode,
+          typeof response.result === 'string' ? response.result : '', missingPath)
+        hilog.error(0, 'CatNodeHttp', 'request_failed route=%{public}s reason=%{public}s', route, error.message)
+        throw error
       }
       return response.result
-    } finally { request.destroy() }
+    } finally { control?.offCancel(destroy); destroy() }
+  }
+
+  /** Keep the server's bounded error reason, without logging response bodies or request URLs/credentials. */
+  static responseError(status: number, body: string, requestedPath: string = ''): Error {
+    let message = ''
+    let code = ''
+    let missingRoute = false
+    try {
+      const value = CatVodCodec.object(JSON.parse(body) as Object)
+      if (value !== null) {
+        message = CatVodCodec.text(value['message'])
+        const candidate = CatVodCodec.text(value['code'])
+        missingRoute = status === 404 && requestedPath.length > 0 &&
+          message === 'Route POST:' + requestedPath + ' not found' &&
+          (candidate.length === 0 || candidate === 'FST_ERR_NOT_FOUND')
+        if (/^[A-Z0-9_-]{1,48}$/i.test(candidate)) code = candidate
+      }
+    } catch (_) {}
+    message = message.replace(/https?:\/\/\S+/gi, '[远端地址]')
+      .replace(/(?:authorization|cookie|token|password)\s*[:=][^\r\n]*/gi, '[敏感信息]')
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().substring(0, 240)
+    const description = '来源请求失败（HTTP ' + status + (code.length > 0 ? '，' + code : '') + '）' +
+      (message.length > 0 ? '：' + message : '')
+    return missingRoute ? new CatNodeRouteNotFoundError(description) : new Error(description)
   }
 }

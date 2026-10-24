@@ -21,6 +21,7 @@ export class CatVodVideo {
   id: string = ''
   name: string = ''
   poster: string = ''
+  searchOnly: boolean = false
   remarks: string = ''
   overview: string = ''
   year: number = 0

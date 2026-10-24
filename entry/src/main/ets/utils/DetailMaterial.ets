@@ -5,6 +5,15 @@ import { getImmersiveMaterialStyleStorageValue, IMMERSIVE_STYLE_THIN, IMMERSIVE_
   resolveImmersiveMaterialStyle } from './HdsPageStyle'
 
 const materialLogger: Logger = new Logger('DetailMaterial')
+const categoryMaterialLogged: Set<string> = new Set()
+
+function logCategoryMaterial(result: string, thickness: string, selected: boolean, enabled: boolean): void {
+  const signature = String(deviceInfo.sdkApiVersion) + ':' + result + ':' + thickness + ':' + String(selected) + ':' + String(enabled)
+  if (categoryMaterialLogged.has(signature)) return
+  categoryMaterialLogged.add(signature)
+  materialLogger.info('category tab result=%{public}s sdk=%{public}d thickness=%{public}s selected=%{public}s enabled=%{public}s',
+    result, deviceInfo.sdkApiVersion, thickness, String(selected), String(enabled))
+}
 
 /** Diagnostic queries must never change the capability decision or break the sheet. */
 function logSheetCapability(): void {
@@ -83,6 +92,20 @@ export function buildDetailSheetOptions(thickness: string, options: SheetOptions
     }
   } else {
     materialLogger.warn('sheet result=fallback reason=api_unavailable')
+  }
+  return options
+}
+
+/** Dialog owns the material surface; customStyle=true would disable native material. */
+export function buildDetailDialogOptions(thickness: string,
+  options: CustomDialogControllerOptions): CustomDialogControllerOptions {
+  if (deviceInfo.sdkApiVersion < 26) return options
+  if (deviceInfo.apiAvailable('26.0.0') && supportsDetailMaterial()) {
+    options.systemMaterial = new uiMaterial.ImmersiveMaterial({
+      style: resolveImmersiveMaterialStyle(thickness), colorInvert: true, applyShadow: true
+    })
+    options.backgroundColor = Color.Transparent
+    materialLogger.info('dialog result=native_configured thickness=%{public}s (not render confirmation)', thickness)
   }
   return options
 }
@@ -186,6 +209,41 @@ export class DetailToggleButtonMaterialModifier implements AttributeModifier<Tog
           this.diagnosticName, String(this.expanded), resolveImmersiveMaterialStyle(this.thickness))
       }
     }
+  }
+}
+
+/** Compact timeline-style chips: let native thickness control translucency without a fixed color overlay. */
+export class CategoryTabMaterialModifier implements AttributeModifier<ToggleAttribute> {
+  private thickness: string
+  private selected: boolean
+  private surface: ResourceColor
+  private enabled: boolean
+
+  constructor(thickness: string, selected: boolean, surface: ResourceColor, enabled: boolean = true) {
+    this.thickness = thickness; this.selected = selected
+    this.surface = surface
+    this.enabled = enabled
+  }
+
+  applyNormalAttribute(instance: ToggleAttribute): void {
+    // Own all background/enabled attributes here; duplicate fluent setters can mask the first material update.
+    instance.enabled(this.enabled)
+    instance.backgroundColor(this.surface)
+    instance.selectedColor(this.surface)
+    if (deviceInfo.sdkApiVersion < 26) { logCategoryMaterial('fallback_old_api', this.thickness, this.selected, this.enabled); return }
+    if (!deviceInfo.apiAvailable('26.0.0')) { logCategoryMaterial('fallback_unavailable_api', this.thickness, this.selected, this.enabled); return }
+    if (!supportsDetailMaterial()) {
+      instance.systemMaterial(uiMaterial.Material.empty)
+      logCategoryMaterial('fallback_disabled_or_unsupported', this.thickness, this.selected, this.enabled)
+      return
+    }
+    instance.backgroundColor(Color.Transparent)
+    instance.selectedColor(Color.Transparent)
+    instance.systemMaterial(new uiMaterial.ImmersiveMaterial({
+      style: resolveImmersiveMaterialStyle(this.thickness),
+      colorInvert: true, interactive: true, lightEffect: {}, applyShadow: true
+    }))
+    logCategoryMaterial('native_configured_clear_not_render_confirmation', this.thickness, this.selected, this.enabled)
   }
 }
 

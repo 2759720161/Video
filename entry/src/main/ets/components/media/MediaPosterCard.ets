@@ -12,6 +12,7 @@ export struct MediaPosterCard {
   @Prop subtitleColor: ResourceColor = $r('app.color.text_secondary')
   @Prop artworkUrl: string = ''
   @Prop enableSharedTransition: boolean = false
+  @Prop scaleOnlyPress: boolean = false
   @Prop cardWidth: number = AppDimensions.POSTER_CARD_WIDTH
   @State private isPressed: boolean = false
   @State private artworkLoaded: boolean = false
@@ -36,8 +37,8 @@ export struct MediaPosterCard {
     }
     .width(this.cardWidth)
     .scale({ x: this.isPressed ? AppMotion.POSTER_PRESS_SCALE : 1, y: this.isPressed ? AppMotion.POSTER_PRESS_SCALE : 1 })
-    .opacity(this.isPressed ? 0.86 : 1)
-    .animation({ duration: AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
+    .opacity(this.scaleOnlyPress ? 1 : (this.isPressed ? 0.86 : 1))
+    .animation({ duration: this.scaleOnlyPress ? AppMotion.HOME_PRESS_MS : AppMotion.TOUCH_FEEDBACK_MS, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) this.isPressed = true
       else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false

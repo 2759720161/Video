@@ -15,6 +15,10 @@ export class PlaybackQueueItem {
   startFromBeginning: boolean = false
   /** 线路、清晰度或媒体版本的可选标识。 */
   variantId: string = ''
+  /** History-only recovery may try one alternative containing the exact same episode. */
+  allowVariantFallback: boolean = false
+  /** One resolution only; set by session refresh and restored immediately afterward. */
+  bypassStreamCache: boolean = false
   trackSelection: PlaybackTrackSelection | null = null
   /** Provider 暴露的可选线路/版本，页面只消费通用模型。 */
   variants: PlaybackVariant[] = []

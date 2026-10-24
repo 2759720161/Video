@@ -21,11 +21,24 @@ function method(source, name) {
 
 for (const name of ['VideoBottomBar', 'LandscapeProgressRow', 'PortraitControlRow', 'VideoInfoRow',
   'ProgressUtilityRow', 'SubtitleToolButton', 'AudioTrackToolButton', 'VideoInfoText',
-  'LandscapeControlRow', 'PrimaryPlaybackControls', 'SpeedToolButton', 'CurrentSpeedSymbol', 'SeekControlButton']) {
+  'LandscapeControlRow', 'SpeedToolButton', 'CurrentSpeedSymbol', 'SeekControlButton']) {
   test(`${name} retains the 2229866 layout and parameters`, () => {
     assert.equal(method(current, name), method(historical, name));
   });
 }
+
+test('episode entry is between speed and rotation while the original transport buttons stay centered', () => {
+  const tools = method(current, 'PrimaryPlaybackControls');
+  assert.ok(tools.indexOf('this.SpeedToolButton()') < tools.indexOf('sys.symbol.list_bullet'));
+  assert.ok(tools.indexOf('sys.symbol.list_bullet') < tools.indexOf('sys.symbol.rectangle_portrait_rotate'));
+  assert.ok(tools.includes('if (!this.isFullScreen) this.PrimaryPlaybackButtons()'));
+  assert.ok(tools.includes('if (this.isFullScreen) this.PrimaryPlaybackButtons()'));
+  const transport = method(current, 'PrimaryPlaybackButtons');
+  const old = method(historical, 'PrimaryPlaybackControls');
+  const start = old.indexOf('      Row({ space: 6 })');
+  const end = old.indexOf('      // 竖屏将倍速', start);
+  assert.ok(transport.includes(old.slice(start, end).trimEnd()));
+});
 
 test('V2 controls are not used by the playback page', () => {
   for (const name of ['PlayerTopBar', 'PlayerProgressBar', 'PlayerPrimaryControls', 'PlayerToolBar', 'PlayerToolbarV2']) {

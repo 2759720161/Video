@@ -3,6 +3,7 @@ import { PlaybackOptions, PlayerState, PlayerTrack, PlayerTrackType, VideoAspect
 import { Logger } from '../../utils/Logger'
 import { fileIo } from '@kit.CoreFileKit'
 import mpvNapi from 'libmpv_napi.so'
+import { MpvDiagnostic } from './MpvDiagnostic'
 
 const logger = new Logger('MpvPlayerEngine')
 let mpvEngineSeq: number = 0
@@ -134,6 +135,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
   private prepareStartedAtMs: number = 0
   private loadfileStartedAtMs: number = 0
   private activeUrlFingerprint: string = ''
+  private diagnosticLogCount: number = 0
+  private diagnosticPrintedCount: number = 0
+  private diagnosticLastStage: string = 'none'
 
   setSurfaceId(surfaceId: string): void {
     this.surfaceId = surfaceId
@@ -209,6 +213,9 @@ export class MpvPlayerEngine implements IPlayerEngine {
     const prepareStartMs = Date.now()
     const canReuseInitializedContext = this.isInitialized && !this.isReleasing && this.ctxId >= 0
     this.prepareStartedAtMs = prepareStartMs
+    this.diagnosticLogCount = 0
+    this.diagnosticPrintedCount = 0
+    this.diagnosticLastStage = 'none'
     this.loadfileStartedAtMs = 0
     this.activeUrlFingerprint = this.fingerprintUrl(options.url)
     logger.warn('CrashDiag mpv prepare start: id=%{public}d urlLength=%{public}d surfaceId=%{public}s',
@@ -1039,18 +1046,20 @@ export class MpvPlayerEngine implements IPlayerEngine {
     if (event.logText.length === 0) {
       return
     }
-    const prefix = event.logPrefix.length > 0 ? event.logPrefix : 'mpv'
-    const level = event.logLevel.length > 0 ? event.logLevel : 'info'
-    const text = event.logText.length > 900 ? event.logText.substring(0, 900) : event.logText
-    logger.info('CrashDiag mpv log meta: id=%{public}d urlHash=%{public}s elapsed=%{public}dms ' +
-      'prefix=%{public}s level=%{public}s textLength=%{public}d',
-      this.diagId, this.activeUrlFingerprint, this.elapsedSincePrepare(), prefix, level, event.logText.length)
-    if (level === 'fatal' || level === 'error') {
-      logger.error('mpv log [%{public}s/%{public}s] %{public}s', prefix, level, text)
-    } else if (level === 'warn') {
-      logger.warn('mpv log [%{public}s/%{public}s] %{public}s', prefix, level, text)
+    this.diagnosticLogCount++
+    const stage = MpvDiagnostic.stage(event.logPrefix, event.logText)
+    const summary = MpvDiagnostic.summary(event.logText)
+    const severe = event.logLevel === 'fatal' || event.logLevel === 'error'
+    if (stage !== 'other') this.diagnosticLastStage = stage
+    // Bound output without allowing credentials embedded in native messages to escape.
+    if (summary.length === 0 && !severe || this.diagnosticPrintedCount >= (severe ? 272 : 256)) return
+    this.diagnosticPrintedCount++
+    if (severe) {
+      logger.error('mpv_diag id=%{public}d elapsedMs=%{public}d stage=%{public}s severity=error %{public}s',
+        this.diagId, this.elapsedSincePrepare(), stage, summary)
     } else {
-      logger.info('mpv log [%{public}s/%{public}s] %{public}s', prefix, level, text)
+      logger.info('mpv_diag id=%{public}d elapsedMs=%{public}d stage=%{public}s severity=info %{public}s',
+        this.diagId, this.elapsedSincePrepare(), stage, summary)
     }
   }
 
@@ -1151,7 +1160,7 @@ export class MpvPlayerEngine implements IPlayerEngine {
     }
     try {
       const msgLevelErr = napi.nativeSetProperty(this.ctxId, 'msg-level',
-        'cplayer=info,vd=debug,vo/gpu=info,demuxer=debug,stream=debug,ffmpeg=debug')
+        'all=warn,cplayer=info,vd=debug,vo=info,demux=debug,stream=debug,ffmpeg=debug')
       // vo=ohcodec sends decoded frames straight to the Surface and never
       // composites mpv's OSD plane, so parsed ASS subtitles remain invisible.
       // The HarmonyOS EGL GPU VO combines OHCodec copy-mode frames with the
@@ -1550,6 +1559,8 @@ export class MpvPlayerEngine implements IPlayerEngine {
       this.prepareTimeoutTimer = -1
       if (this.isAwaitingFileLoaded && this.isInitialized && !this.isReleasing) {
         this.isAwaitingFileLoaded = false
+        logger.error('mpv_diag timeout id=%{public}d nativeMessages=%{public}d lastStage=%{public}s',
+          this.diagId, this.diagnosticLogCount, this.diagnosticLastStage)
         logger.error('mpv prepare timeout: id=%{public}d urlHash=%{public}s timeoutMs=%{public}d ' +
           'elapsed=%{public}dms loadfileElapsed=%{public}dms',
           this.diagId, this.activeUrlFingerprint, this.prepareTimeoutMs, this.elapsedSincePrepare(),

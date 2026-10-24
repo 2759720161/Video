@@ -1,5 +1,12 @@
 {
   "color": [
+    { "name": "cat_detail_control_surface", "value": "#332A303B" },
+    { "name": "cat_category_surface", "value": "#E6242D3B" },
+    { "name": "cat_category_selected_text", "value": "#75B7FF" },
+    {
+      "name": "search_control_scope_surface",
+      "value": "#260A59F7"
+    },
     {
       "name": "start_window_background",
       "value": "#000000"
@@ -373,8 +380,24 @@
       "value": "#4D000000"
     },
     {
+      "name": "cat_hero_caption_shadow",
+      "value": "#E6000000"
+    },
+    {
       "name": "cat_hero_badge_background",
       "value": "#4D000000"
+    },
+    {
+      "name": "emby_hero_nav_scrim",
+      "value": "#52000000"
+    },
+    {
+      "name": "emby_hero_caption_shadow",
+      "value": "#E6000000"
+    },
+    {
+      "name": "home_carousel_subtitle",
+      "value": "#AAB4C2"
     }
   ]
 }

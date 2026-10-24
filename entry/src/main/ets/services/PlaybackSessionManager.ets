@@ -75,7 +75,11 @@ export class PlaybackSessionManager {
     const index = current.queueIndex >= 0 && current.queueIndex < current.queue.length ? current.queueIndex : 0
     const item = current.queue[index]
     if (item === null || typeof item !== 'object' || Array.isArray(item)) return current
-    const refreshed = await resolver.resolvePlayback(item)
+    const previousBypass = item.bypassStreamCache
+    item.bypassStreamCache = true
+    let refreshed: PlaybackSession
+    try { refreshed = await resolver.resolvePlayback(item) }
+    finally { item.bypassStreamCache = previousBypass }
     if (refreshed === null || typeof refreshed !== 'object' || Array.isArray(refreshed) ||
       refreshed.media === null || typeof refreshed.media !== 'object' || Array.isArray(refreshed.media) ||
       refreshed.stream === null || typeof refreshed.stream !== 'object' || Array.isArray(refreshed.stream)) {

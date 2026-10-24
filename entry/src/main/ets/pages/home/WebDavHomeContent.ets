@@ -8,6 +8,7 @@ import { ProviderPlaybackLauncher } from '../../services/ProviderPlaybackLaunche
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
 import { PageEmptyState } from '../../components/common/PageEmptyState'
+import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
 import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
 import { getTopSpacerHeight } from '../../utils/HdsPageStyle'
 
@@ -59,7 +60,10 @@ export struct WebDavHomeContent {
         }
         if (this.loading) PageLoadingState({ title: '正在读取文件', minHeight: 220 })
         if (this.resume.length > 0) {
-          Text('继续观看').fontSize(20).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).width('100%')
+          MediaSectionHeader({ title: '继续观看', actionText: '继续播放', chevronAction: true, onAction: () => {
+            void this.getUIContext().getRouter().pushUrl({ url: 'pages/local/ContinueWatchingPage',
+              params: { view: 'continue', sourceId: this.source.id, scopeName: this.source.name } })
+          } })
           Column() { ForEach(this.resume, (item: MediaItem) => this.FileRow(item), (item: MediaItem) => 'resume:' + item.id) }
             .width('100%').backgroundColor($r('app.color.card_background')).borderRadius(20)
         }

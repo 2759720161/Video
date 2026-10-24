@@ -236,7 +236,8 @@ extern "C" int mpv_event_handler_init(napi_env env, napi_value callback, int64_t
 {
     if (g_tsfn_initialized.load()) {
         ensure_event_thread_started();
-        mpv_wrapper_request_log_messages(ctxId, "info");
+        const int logResult = mpv_wrapper_request_log_messages(ctxId, "terminal-default");
+        if (logResult < 0) return logResult;
         mpv_wrapper_set_wakeup_callback(ctxId, mpv_wakeup_callback,
                                          reinterpret_cast<void *>(static_cast<intptr_t>(ctxId)));
         return 0;
@@ -253,7 +254,8 @@ extern "C" int mpv_event_handler_init(napi_env env, napi_value callback, int64_t
     g_tsfn_initialized.store(true);
     ensure_event_thread_started();
 
-    mpv_wrapper_request_log_messages(ctxId, "info");
+    const int logResult = mpv_wrapper_request_log_messages(ctxId, "terminal-default");
+    if (logResult < 0) return logResult;
     mpv_wrapper_set_wakeup_callback(ctxId, mpv_wakeup_callback,
                                      reinterpret_cast<void *>(static_cast<intptr_t>(ctxId)));
     return 0;

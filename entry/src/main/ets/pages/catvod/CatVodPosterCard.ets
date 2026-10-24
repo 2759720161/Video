@@ -1,13 +1,18 @@
+import { AppMotion } from '../../ui/theme/AppMotion'
+
 @Component
 export struct CatVodPosterCard {
   @Prop title: string = ''
   @Prop remarks: string = ''
   @Prop @Watch('resetArtwork') poster: string = ''
   @Prop cardWidth: number = 100
+  @Prop scaleOnlyPress: boolean = false
   @State private failed: boolean = false
+  @State private isPressed: boolean = false
   onOpen: () => void = () => {}
 
   private resetArtwork(): void { this.failed = false }
+  aboutToDisappear(): void { this.isPressed = false }
 
   build() {
     Button({ type: ButtonType.Normal }) {
@@ -35,6 +40,14 @@ export struct CatVodPosterCard {
           .textAlign(TextAlign.Start)
       }.width(this.cardWidth).alignItems(HorizontalAlign.Start)
     }.width(this.cardWidth).padding(0).borderRadius(12).backgroundColor(Color.Transparent)
+      .stateEffect(!this.scaleOnlyPress).shadow({ radius: 0 })
+      .scale({ x: this.scaleOnlyPress && this.isPressed ? AppMotion.POSTER_PRESS_SCALE : 1,
+        y: this.scaleOnlyPress && this.isPressed ? AppMotion.POSTER_PRESS_SCALE : 1 })
+      .animation({ duration: AppMotion.HOME_PRESS_MS, curve: Curve.EaseOut })
+      .onTouch((event: TouchEvent) => {
+        if (event.type === TouchType.Down) this.isPressed = true
+        else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false
+      })
       .accessibilityText(this.title + (this.remarks.length > 0 ? '，' + this.remarks : ''))
       .onClick(() => this.onOpen())
   }

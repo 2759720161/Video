@@ -282,6 +282,7 @@ export struct LibraryPage {
         }
         .padding({ right: 24 })
       }
+      .align(Alignment.TopStart)
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
       .width('calc(100% + 16vp)')

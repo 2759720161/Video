@@ -48,6 +48,8 @@ test('host starts on discovered loopback ports and preserves the process working
     assert.equal(globalThis.catDartServerPort(), ready.hostPort);
     const response = await fetch(`http://127.0.0.1:${ready.port}/health`);
     assert.deepEqual(await response.json(), { ok: true, path: '/health' });
+    const deniedImage = await fetch(`http://127.0.0.1:${ready.port}/__video_artwork?url=http%3A%2F%2F127.0.0.1%2Fprivate`);
+    assert.equal(deniedImage.status, 400);
     assert.equal(events[0].type, 'host-ready');
     assert.ok(events.some(event => event.type === 'ready'));
   });

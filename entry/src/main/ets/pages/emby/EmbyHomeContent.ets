@@ -2,7 +2,10 @@ import { buildDetailToastOptions } from '../../utils/DetailMaterial'
 import { common } from '@kit.AbilityKit'
 import { ColorMetrics, Theme } from '@kit.ArkUI'
 import { HomeHeroColors } from '../../services/media/HomeHeroColors'
+import { HomeHeroSyncTrace } from '../../services/media/HomeHeroSyncTrace'
 import { HomeHeroPalette } from '../../services/media/HomeHeroPalette'
+import { HomeMediaCarousel } from '../../components/media/carousel/HomeMediaCarousel'
+import { HomeCarouselItem } from '../../components/media/carousel/HomeCarouselItem'
 import { MediaSourceInstance } from '../../core/media/MediaSourceInstance'
 import { EmbyItem } from '../../providers/emby/EmbyModels'
 import { EmbyProvider } from '../../providers/emby/EmbyProvider'
@@ -16,6 +19,8 @@ import { EmbyHomeCoordinator } from '../../services/library/EmbyHomeCoordinator'
 import { EmbyHomeSnapshot, EmbyHomeSection } from '../../services/library/EmbyHomeSnapshot'
 import { MediaPosterCard } from '../../components/media/MediaPosterCard'
 import { ContinueWatchingCard } from '../../components/media/ContinueWatchingCard'
+import { ContinueWatchingPresentation } from '../../components/media/ContinueWatchingPresentation'
+import { ResumeFrameStore } from '../../services/media/ResumeFrameStore'
 import { MediaSectionHeader } from '../../components/media/MediaSectionHeader'
 import { PageLoadingState } from '../../components/common/PageLoadingState'
 import { PageErrorState } from '../../components/common/PageErrorState'
@@ -51,10 +56,12 @@ export struct EmbyHomeContent {
   @State private searching: boolean = false
   @State private searchError: string = ''
   @State private featuredIndex: number = 0
+  @State private featuredWidth: number = 0
   @State private heroSurface: string = ''
+  @State private resumeFrames: Record<string, string> = {}
+  private resumeFrameRequest: number = 0
   onBackgroundChanged: (sourceId: string, sourceUpdatedAt: number, color: string) => void = () => {}
   scroller: Scroller = new Scroller()
-  private featuredSwiper: SwiperController = new SwiperController()
   private coordinator: EmbyHomeCoordinator | null = null
   private generation: number = 0
   private searchGeneration: number = 0
@@ -67,6 +74,8 @@ export struct EmbyHomeContent {
   private themeBase: number = 0
   private featuredKey: string = ''
   private featuredItemId: string = ''
+  private featuredProgress: number = 0
+  private progressReady: boolean = false
   private failedArtwork: Set<string> = new Set()
 
   aboutToAppear(): void {
@@ -86,16 +95,17 @@ export struct EmbyHomeContent {
   }
   private memoryKey(): string { return this.source.id + ':' + this.source.updatedAt }
   private onActiveChanged(): void {
-    if (this.isActive) { this.restorePending = true; void this.updateFeaturedColor(); void this.refresh() }
+    if (this.isActive) { this.restorePending = true; void this.updateFeaturedColor(); void this.warmFeaturedColors(); void this.refresh() }
     else { this.colorRequest++; this.refreshGeneration++; this.coordinator?.dispose(); this.refreshing = false; this.cancelSearch() }
   }
   private onForegroundChanged(): void {
     this.colorRequest++
-    if (this.foreground && this.isActive) { void this.updateFeaturedColor(); void this.refresh() }
+    if (this.foreground && this.isActive) { void this.updateFeaturedColor(); void this.warmFeaturedColors(); void this.refresh() }
   }
 
   private async initialize(): Promise<void> {
     const generation = ++this.generation
+    this.resumeFrames = {}
     try {
       const provider = await ProviderRegistry.get(this.source.id, this.getUIContext().getHostContext() as common.UIAbilityContext)
       if (generation !== this.generation) return
@@ -122,10 +132,25 @@ export struct EmbyHomeContent {
       await this.coordinator.load((value: EmbyHomeSnapshot) => {
         if (generation === this.generation && this.isActive) {
           this.snapshot = value; this.error = ''; this.syncFeaturedColor()
+          void this.refreshResumeFrames(value)
         }
       })
     } catch (_) { if (generation === this.generation) { this.error = '加载失败，请重试'; this.applyHeroTone('') } }
     finally { if (generation === this.generation && refreshGeneration === this.refreshGeneration) this.refreshing = false }
+  }
+
+  private async refreshResumeFrames(snapshot: EmbyHomeSnapshot): Promise<void> {
+    if (!this.alive || !this.isActive) return
+    const request = ++this.resumeFrameRequest
+    const generation = this.generation
+    const frames: Record<string, string> = {}
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    for (const item of snapshot.resumeItems) {
+      const frame = await ResumeFrameStore.resolve(context, this.source.id, item.id, item.resumePositionMs())
+      if (!this.alive || generation !== this.generation || request !== this.resumeFrameRequest) return
+      if (frame.length > 0) frames[item.id] = frame
+    }
+    if (this.alive && generation === this.generation && request === this.resumeFrameRequest) this.resumeFrames = frames
   }
 
   private hasFeaturedBackground(): boolean {
@@ -142,6 +167,7 @@ export struct EmbyHomeContent {
   private applyHeroTone(tone: string): void {
     this.heroTone = tone
     this.heroSurface = HomeHeroColors.surface(tone, this.themeBase)
+    HomeHeroSyncTrace.applied('emby', 'content', this.heroSurface)
     this.publishBackground()
   }
 
@@ -150,14 +176,47 @@ export struct EmbyHomeContent {
       this.heroSurface : $r('app.color.page_background')
   }
 
+  private carouselWidth(): number {
+    return this.featuredWidth || Math.min(this.screenWidth, getMediaContentMaxWidth(this.screenWidth) || this.screenWidth)
+  }
+
+  private carouselItems(): HomeCarouselItem[] {
+    const provider = this.provider
+    if (provider === null) return []
+    return this.featuredItems().map((value: EmbyItem): HomeCarouselItem => {
+      const item = new HomeCarouselItem()
+      item.id = value.id; item.title = value.seriesName || value.name; item.subtitle = value.subtitle()
+      item.artworkUrl = this.heroArtwork(value)
+      return item
+    })
+  }
+
+  private heroArtwork(item: EmbyItem): string {
+    return this.provider?.imageUrlFor(item, 900) || this.artwork(item, true)
+  }
+
+  private heroPaletteArtwork(item: EmbyItem): string {
+    return this.provider?.imageUrlFor(item, 64) || this.provider?.backdropUrlFor(item, 64) ||
+      this.provider?.thumbnailUrlFor(item, 64) || this.heroArtwork(item)
+  }
+
+  private openFeatured(id: string): void {
+    const item = this.featuredItems().find((value: EmbyItem) => value.id === id)
+    if (item === undefined) return
+    if (item.isFolder) this.openDetail(item)
+    else void this.play(item)
+  }
+
   private syncFeaturedColor(): void {
     const items = this.featuredItems()
-    const key = items.map((item: EmbyItem) => item.id + ':' + this.artwork(item, true)).join('|')
+    const key = items.map((item: EmbyItem) => item.id + ':' + this.heroArtwork(item)).join('|')
     if (key !== this.featuredKey) {
       this.featuredKey = key
       const index = items.findIndex((item: EmbyItem) => item.id === this.featuredItemId)
       this.featuredIndex = Math.max(0, index)
       this.featuredItemId = items[this.featuredIndex]?.id ?? ''
+      this.featuredProgress = this.featuredIndex; this.progressReady = false
+      void this.warmFeaturedColors()
     }
     void this.updateFeaturedColor()
   }
@@ -166,13 +225,39 @@ export struct EmbyHomeContent {
     const item = this.featuredItems()[index]
     if (item === undefined) return
     this.featuredIndex = index; this.featuredItemId = item.id
+    if (!this.progressReady) this.featuredProgress = index
     void this.updateFeaturedColor()
+  }
+
+  private onFeaturedProgress(position: number): void {
+    if (!Number.isFinite(position)) return
+    this.featuredProgress = position; this.progressReady = true; this.applyProgressTone()
+  }
+
+  private applyProgressTone(allowEmpty: boolean = false): void {
+    if (!this.alive || !this.isActive || !this.foreground || !this.hasFeaturedBackground()) return
+    const tone = HomeHeroPalette.at(this.featuredItems().map((item: EmbyItem) => this.heroArtwork(item)),
+      this.progressReady ? this.featuredProgress : this.featuredIndex, this.failedArtwork)
+    HomeHeroSyncTrace.palette('emby', tone.length > 0, tone)
+    if ((!allowEmpty && tone.length === 0) || tone === this.heroTone) return
+    this.applyHeroTone(tone)
+  }
+
+  private async warmFeaturedColors(): Promise<void> {
+    if (!this.alive || !this.isActive || !this.foreground || !this.hasFeaturedBackground()) return
+    const generation = this.generation
+    const key = this.featuredKey
+    await HomeHeroPalette.warm(this.featuredItems().map((item: EmbyItem) => this.heroArtwork(item)), () => {
+      if (generation === this.generation && key === this.featuredKey) this.applyProgressTone()
+    }, this.featuredIndex, () => this.alive && this.isActive && this.foreground &&
+      this.hasFeaturedBackground() && generation === this.generation && key === this.featuredKey,
+      this.featuredItems().map((item: EmbyItem) => this.heroPaletteArtwork(item)))
   }
 
   private onFeaturedArtworkError(url: string): void {
     this.failedArtwork.add(url)
     const item = this.featuredItems()[this.featuredIndex]
-    if (item !== undefined && this.artwork(item, true) === url) {
+    if (item !== undefined && this.heroArtwork(item) === url) {
       this.colorRequest++; this.applyHeroTone('')
     }
   }
@@ -183,20 +268,15 @@ export struct EmbyHomeContent {
     const items = this.featuredItems()
     const item = items[this.featuredIndex]
     if (!this.hasFeaturedBackground() || item === undefined) { this.applyHeroTone(''); return }
-    const url = this.artwork(item, true)
-    if (url.length === 0 || this.failedArtwork.has(url)) { this.applyHeroTone(''); return }
+    const url = this.heroArtwork(item)
+    if (url.length === 0 || this.failedArtwork.has(url)) { this.applyProgressTone(true); return }
     const generation = this.generation
-    const tone = await HomeHeroPalette.resolve(url)
+    await HomeHeroPalette.resolve(url, this.heroPaletteArtwork(item))
     const current = this.featuredItems()[this.featuredIndex]
     if (!this.alive || !this.isActive || !this.foreground || request !== this.colorRequest ||
       generation !== this.generation || !this.hasFeaturedBackground() || current === undefined || current.id !== item.id ||
-      this.artwork(current, true) !== url) return
-    this.applyHeroTone(tone)
-    const next = items[(this.featuredIndex + 1) % items.length]
-    const nextUrl = next !== undefined ? this.artwork(next, true) : ''
-    if (nextUrl.length > 0 && nextUrl !== url && !this.failedArtwork.has(nextUrl)) {
-      void HomeHeroPalette.resolve(nextUrl)
-    }
+      this.heroArtwork(current) !== url) return
+    this.applyProgressTone(true)
   }
 
   build() {
@@ -222,12 +302,11 @@ export struct EmbyHomeContent {
           }
       }.width('100%').alignItems(HorizontalAlign.Start)
         .constraintSize({ maxWidth: getMediaContentMaxWidth(this.screenWidth) || '100%' })
-        .padding({ top: 0,
+        .padding({ top: this.hasFeaturedBackground() && !this.showSearch ? 0 : getTopSpacerHeight(this.topSafeHeight) + 12,
           left: this.pagePadding(), right: this.pagePadding(), bottom: this.bottomSafeHeight + 120 })
         .onAreaChange(() => this.restorePosition())
     }.width('100%').height('100%').edgeEffect(EdgeEffect.Spring).scrollBar(BarState.Off)
       .backgroundColor(this.hasFeaturedBackground() && this.heroSurface.length > 0 ? this.heroSurface : Color.Transparent)
-      .animation({ duration: 500, curve: Curve.EaseInOut })
       .onDidScroll(() => this.savePosition())
   }
 
@@ -244,17 +323,18 @@ export struct EmbyHomeContent {
     }
     if (this.otherResume().length > 0) {
       Column({ space: 14 }) {
-        MediaSectionHeader({ title: '继续观看', actionText: '全部', onAction: () => this.openResumeList() })
+        MediaSectionHeader({ title: '继续观看', actionText: '继续播放', chevronAction: true, onAction: () => this.openResumeList() })
         Scroll() {
-          Row({ space: 14 }) {
+          Row({ space: 12 }) {
             ForEach(this.otherResume(), (item: EmbyItem) => {
               ContinueWatchingCard({ title: item.seriesName.length > 0 ? item.seriesName : item.name,
-                subtitle: item.subtitle(), artworkUrl: this.artwork(item, true), positionMs: item.resumePositionMs(),
-                durationMs: item.durationMs(), cardWidth: ResponsiveSizeClassResolver.landscapeWidth(this.screenWidth),
+                subtitle: item.subtitle(), artworkUrl: this.resumeFrames[item.id] || this.artwork(item, true), positionMs: item.resumePositionMs(),
+                durationMs: item.durationMs(), scaleOnlyPress: true,
+                cardWidth: ContinueWatchingPresentation.width(this.carouselWidth() - this.pagePadding() * 2),
                 onCardClick: () => { void this.play(item) } })
-            }, (item: EmbyItem) => this.source.id + ':resume:' + item.id)
+            }, (item: EmbyItem) => this.source.id + ':resume:' + item.id + ':' + (this.resumeFrames[item.id] || ''))
           }
-        }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+        }.width('100%').align(Alignment.TopStart).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
       }.width('100%')
     }
     if (this.snapshot.nextUpItems.length > 0) {
@@ -267,16 +347,16 @@ export struct EmbyHomeContent {
           Row({ space: 14 }) {
             ForEach(this.snapshot.nextUpItems, (item: EmbyItem) => {
               ContinueWatchingCard({ title: item.seriesName || item.name, subtitle: item.subtitle(),
-                artworkUrl: this.artwork(item, true),
+                artworkUrl: this.artwork(item, true), scaleOnlyPress: true,
                 cardWidth: ResponsiveSizeClassResolver.landscapeWidth(this.screenWidth),
                 onCardClick: () => this.openDetail(item) })
             }, (item: EmbyItem) => this.source.id + ':next:' + item.id)
           }
-        }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+        }.width('100%').align(Alignment.TopStart).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
       }.width('100%')
     }
     ForEach(this.snapshot.sections, (section: EmbyHomeSection) => {
-      if (section.items.length > 0 || section.loading || section.error.length > 0) this.Section(section)
+      if (this.sectionPosters(section).length > 0 || section.loading || section.error.length > 0) this.Section(section)
     }, (section: EmbyHomeSection) => this.source.id + ':' + section.id)
     if (!this.snapshot.librariesLoading && !this.snapshot.resumeLoading && this.featuredItems().length === 0 &&
       this.snapshot.librariesError.length === 0 && this.snapshot.resumeError.length === 0 &&
@@ -287,61 +367,18 @@ export struct EmbyHomeContent {
 
   @Builder
   private FeaturedCarousel(): void {
-    Stack({ alignContent: Alignment.BottomStart }) {
-      Swiper(this.featuredSwiper) {
-      ForEach(this.featuredItems(), (item: EmbyItem) => {
-        Stack() {
-          Image(this.artwork(item, true).length > 0 ? this.artwork(item, true) : $r('app.media.ic_placeholder'))
-            .width('100%').height('100%').objectFit(ImageFit.Cover).blur(14).opacity(0.72).draggable(false)
-          Image(this.artwork(item, true).length > 0 ? this.artwork(item, true) : $r('app.media.ic_placeholder'))
-            .width('100%').height('100%').objectFit(ImageFit.Cover).opacity(0.9).draggable(false)
-            .onError(() => this.onFeaturedArtworkError(this.artwork(item, true)))
-          Column()
-            .width('100%').height('100%')
-            .linearGradient({ direction: GradientDirection.Bottom,
-              colors: [['#52000000', 0], ['#00000000', 0.22], ['#22000000', 0.35],
-                ['#D6000000', 0.78], [this.heroBackground(), 1]] })
-            .animation({ duration: 500, curve: Curve.EaseInOut })
-          Column({ space: 8 }) {
-            Text('精选推荐')
-              .fontSize(13).fontWeight(FontWeight.Medium).fontColor('#E6FFFFFF')
-            Text(item.seriesName.length > 0 ? item.seriesName : item.name)
-              .fontSize(22).fontWeight(FontWeight.Bold).fontColor(Color.White)
-              .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%').lineHeight(28)
-            Text(item.subtitle()).fontSize(14).fontColor('#E6FFFFFF')
-              .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%').lineHeight(18)
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.End)
-          .padding({ left: 20, right: 20, top: this.featuredTopPadding(), bottom: this.featuredBottomPadding() })
-          .alignItems(HorizontalAlign.Start)
-        }
-        .width('100%').height(this.featuredHeight()).clip(true)
-        .onClick(() => { if (item.isFolder) this.openDetail(item); else void this.play(item) })
-      }, (item: EmbyItem) => this.source.id + ':featured:' + item.id)
-      }
-      .width('100%').height(this.featuredHeight())
-      .index(this.featuredIndex)
-      .indicator(false).autoPlay(this.isActive && this.foreground && this.featuredItems().length > 1).interval(5000)
-      .loop(this.featuredItems().length > 1).duration(500).itemSpace(0)
-      .onChange((index: number) => this.onFeaturedChanged(index))
-
-      if (this.featuredItems().length > 1) {
-        Row({ space: 6 }) {
-          ForEach(this.featuredItems(), (item: EmbyItem, index: number) => {
-            Row()
-              .width(index === this.featuredIndex ? 20 : 8)
-              .height(4).borderRadius(2)
-              .backgroundColor(index === this.featuredIndex ? Color.White : '#99FFFFFF')
-              .animation({ duration: 200, curve: Curve.EaseOut })
-          }, (item: EmbyItem) => this.source.id + ':featured-dot:' + item.id)
-        }.margin({ bottom: 16, left: 20 })
-      }
-    }
-    .width('calc(100% + ' + String(this.pagePadding() * 2) + 'vp)')
-    .margin({ left: -this.pagePadding(), right: -this.pagePadding() })
-    .height(this.featuredHeight())
+    HomeMediaCarousel({ items: this.carouselItems(), currentIndex: this.featuredIndex, diagnosticKind: 'emby',
+      version: this.generation, viewportWidth: this.carouselWidth(),
+      topInset: this.showSearch ? 0 : getTopSpacerHeight(this.topSafeHeight), isActive: this.isActive,
+      onIndexChanged: (index: number) => this.onFeaturedChanged(index),
+      onProgress: (position: number) => this.onFeaturedProgress(position),
+      onOpen: (id: string) => this.openFeatured(id), onArtworkError: (url: string) => this.onFeaturedArtworkError(url) })
+      .width('calc(100% + ' + String(this.pagePadding() * 2) + 'vp)')
+      .margin({ left: -this.pagePadding(), right: -this.pagePadding() })
+      .onAreaChange((_oldArea: Area, area: Area) => {
+        const width = Number(area.width)
+        if (Number.isFinite(width) && width > 40 && Math.abs(width - this.featuredWidth) > 1) this.featuredWidth = width
+      })
   }
 
   @Builder
@@ -350,12 +387,12 @@ export struct EmbyHomeContent {
       MediaSectionHeader({ title: section.title, actionText: '全部',
         onAction: () => this.openLibrary(section.id, section.title, section.collectionType) })
       if (section.error.length > 0) this.RetryNotice('此栏目暂未更新')
-      if (section.items.length === 0 && section.loading) {
+      if (this.sectionPosters(section).length === 0 && section.loading) {
         PageLoadingState({ title: '正在读取' + section.title, minHeight: 150 })
-      } else {
+      } else if (this.sectionPosters(section).length > 0) {
         Scroll() {
           Row({ space: 12 }) {
-            ForEach(section.items, (item: EmbyItem) => {
+            ForEach(this.sectionPosters(section), (item: EmbyItem) => {
               this.Poster(item)
             }, (item: EmbyItem) => this.source.id + ':' + section.id + ':' + item.id)
           }
@@ -406,7 +443,7 @@ export struct EmbyHomeContent {
   private Poster(item: EmbyItem): void {
     MediaPosterCard({ title: item.name, subtitle: item.subtitle(), artworkUrl: this.artwork(item, false),
       cardWidth: ResponsiveSizeClassResolver.posterWidth(this.screenWidth),
-      enableSharedTransition: true,
+      enableSharedTransition: true, scaleOnlyPress: true,
       onCardClick: (transitionId: string) => this.openDetail(item, transitionId, this.artwork(item, false)) })
   }
 
@@ -415,6 +452,12 @@ export struct EmbyHomeContent {
     Button(message + ' · 重试', { type: ButtonType.Normal }).width('100%').constraintSize({ minHeight: 44 })
       .fontSize(14).fontColor($r('app.color.text_secondary')).backgroundColor($r('app.color.card_background'))
       .borderRadius(14).onClick(() => { void this.refresh() })
+  }
+
+  private sectionPosters(section: EmbyHomeSection): EmbyItem[] {
+    if (this.provider === null) return section.items
+    const ids = new Set(this.featuredItems().map((item: EmbyItem) => item.id))
+    return section.items.filter((item: EmbyItem) => !ids.has(item.id))
   }
 
   private featuredItems(): EmbyItem[] {
@@ -432,13 +475,6 @@ export struct EmbyHomeContent {
     return result
   }
   private otherResume(): EmbyItem[] { return this.snapshot.resumeItems }
-  private featuredHeight(): number {
-    const width = Number.isFinite(this.screenWidth) && this.screenWidth > 0 ? this.screenWidth : 360
-    const base = width >= 840 ? 360 : (width >= 600 ? 340 : 300)
-    return base + getTopSpacerHeight(this.topSafeHeight)
-  }
-  private featuredTopPadding(): number { return this.topSafeHeight > 0 ? getTopSpacerHeight(this.topSafeHeight) + 24 : 60 }
-  private featuredBottomPadding(): number { return this.screenWidth >= 600 ? 54 : 48 }
   private pagePadding(): number { return ResponsiveSizeClassResolver.pagePadding(this.screenWidth) }
   private artwork(item: EmbyItem, landscape: boolean): string {
     if (this.provider === null) return ''

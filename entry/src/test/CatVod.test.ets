@@ -14,9 +14,11 @@ const DETAIL: string = '{"page":1,"pagecount":1,"list":[{"vod_id":"show|1","vod_
 
 class FixtureSource implements CatVodDataSource {
   content: string = DETAIL
+  detailRequests: number = 0
   async categories(): Promise<CatVodCategory[]> { return [] }
   async page(_category: string, _keyword: string, _page: number): Promise<CatVodPage> { return CatVodCodec.parse(this.content) }
   async detail(id: string): Promise<CatVodVideo | null> {
+    this.detailRequests++
     return CatVodCodec.parse(this.content).videos.find((video: CatVodVideo) => video.id === id) ?? null
   }
 }
@@ -139,6 +141,24 @@ export default function catVodTest(): void {
       expect(after.stream.referer).assertEqual(config.referer)
       expect(after.stream.userAgent).assertEqual(config.userAgent)
       expect((await provider.getItem(item.mediaId))!.id).assertEqual(item.mediaId)
+    })
+    it('history_open_consumes_its_prepared_detail_once_then_refreshes_normally', 0, async () => {
+      const fixture = new FixtureSource()
+      const provider = new CatVodProvider(source(), fixture, new CatVodSourceConfig())
+      const video = CatVodCodec.parse(DETAIL).videos[0]
+      const current = queue(provider, video, 0, 0)
+      const restored = await provider.getItem(current.mediaId)
+      expect(restored !== null).assertTrue()
+      current.variantId = restored!.variantId
+      fixture.content = DETAIL.replace('A$$$', '重命名线路$$$')
+      const opened = await provider.resolvePlayback(current)
+      expect(fixture.detailRequests).assertEqual(1)
+      expect(opened.media.mediaId).assertEqual(current.mediaId)
+      expect(opened.stream.url).assertEqual('https://a.invalid/1.m3u8')
+      fixture.content = DETAIL.replace('https://a.invalid/1.m3u8', 'https://a.invalid/1.m3u8?fresh=1')
+      const refreshed = await provider.resolvePlayback(current)
+      expect(fixture.detailRequests).assertEqual(2)
+      expect(refreshed.stream.url).assertEqual('https://a.invalid/1.m3u8?fresh=1')
     })
     it('refreshes_only_the_current_series_queue_and_preserves_position', 0, async () => {
       const provider = new CatVodProvider(source(), new FixtureSource(), new CatVodSourceConfig())

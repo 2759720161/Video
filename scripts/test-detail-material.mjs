@@ -14,6 +14,7 @@ const settings = new Map();
 globalThis.AppStorage = { get: (key) => settings.get(key), setOrCreate: (key, value) => settings.set(key, value) };
 globalThis.Color = { Transparent: 'transparent' };
 const nativeMaterial = {
+  Material: { empty: { kind: 'empty-material' } },
   MaterialState: { DISABLE: 2 },
   MaterialLevel: { EXQUISITE: 0, GENTLE: 1, SMOOTH: 2 },
   getGlobalMaterialLevel() { if (runtime.failLevel) throw new Error('Level unavailable'); return runtime.level; },
@@ -174,6 +175,30 @@ function reset(overrides = {}) {
   Object.assign(runtime, { version: 26, available: true, supported: true, state: 1,
     failCapability: false, nativeReads: 0, versionChecks: 0, created: [], level: 0, failLevel: false }, overrides);
 }
+
+test('episode dialog material follows all thickness choices with inversion, shadow and a clear content surface', () => {
+  for (const [thickness, style] of [['ultraThin', 0], ['thin', 1], ['regular', 2], ['thick', 3], ['ultraThick', 4]]) {
+    reset();
+    const builder = () => {};
+    const options = material.buildDetailDialogOptions(thickness, { builder, customStyle: false,
+      width: '44%', height: '88%', backgroundColor: 'fallback' });
+    assert.equal(options.builder, builder); assert.equal(options.customStyle, false);
+    assert.equal(options.width, '44%'); assert.equal(options.height, '88%');
+    assert.equal(options.backgroundColor, 'transparent');
+    assert.deepEqual(options.systemMaterial.options, { style, colorInvert: true, applyShadow: true });
+  }
+});
+
+test('episode dialog fallback remains readable without touching unavailable native APIs', () => {
+  for (const overrides of [{ version: 23 }, { version: 25 }, { available: false }, { supported: false },
+    { state: 2 }, { failCapability: true }]) {
+    reset(overrides);
+    const options = material.buildDetailDialogOptions('thin', { builder() {}, customStyle: false, backgroundColor: 'fallback' });
+    assert.equal(options.backgroundColor, 'fallback'); assert.equal(options.systemMaterial, undefined);
+    assert.equal(runtime.created.length, 0);
+    if (runtime.version < 26) assert.equal(runtime.nativeReads, 0);
+  }
+});
 
 test('sheet diagnostics expose thickness, device tier, configured material and fallback without changing behavior', () => {
   reset({ level: 2 });
@@ -385,5 +410,55 @@ test('sheet stays transparent and retains selected material when expanded', () =
     assert.equal(options.showClose, false);
     assert.equal(options.backgroundColor, Color.Transparent);
     assert.equal(options.systemMaterial.options.style, nativeMaterial.ImmersiveStyle.THIN);
+  }
+});
+
+test('category tabs preserve native thickness and enable inversion, shadow and interaction without an opaque overlay', () => {
+  for (const [index, thickness] of ['ultraThin', 'thin', 'regular', 'thick', 'ultraThick'].entries()) {
+    for (const selected of [false, true]) {
+      reset(); const applied = {};
+      const control = { enabled(value) { applied.enabled = value; }, backgroundColor(value) { applied.background = value; },
+        selectedColor(value) { applied.selectedBackground = value; }, systemMaterial(value) { applied.material = value; } };
+      new material.CategoryTabMaterialModifier(thickness, selected, 'surface').applyNormalAttribute(control);
+      assert.equal(applied.enabled, true);
+      assert.equal(applied.background, Color.Transparent); assert.equal(applied.selectedBackground, Color.Transparent);
+      assert.equal(applied.material.options.materialColor, undefined); assert.equal(applied.material.options.style, index);
+      assert.equal(applied.material.options.colorInvert, true); assert.equal(applied.material.options.interactive, true);
+      assert.equal(applied.material.options.applyShadow, true); assert.deepEqual(applied.material.options.lightEffect, {});
+    }
+  }
+});
+
+test('category fallback restores readable surfaces, clears a previous native material and protects old APIs', () => {
+  const applied = {};
+  const control = { enabled(value) { applied.enabled = value; }, backgroundColor(value) { applied.background = value; },
+    selectedColor(value) { applied.selectedBackground = value; }, systemMaterial(value) { applied.material = value; } };
+  const adapter = new material.CategoryTabMaterialModifier('thin', true, 'readable-surface');
+  reset(); adapter.applyNormalAttribute(control); assert.ok(applied.material.options);
+  for (const state of [{ supported: false }, { state: 2 }, { failCapability: true }]) {
+    reset(state); adapter.applyNormalAttribute(control);
+    assert.equal(applied.background, 'readable-surface'); assert.equal(applied.selectedBackground, 'readable-surface');
+    assert.equal(applied.material, nativeMaterial.Material.empty);
+  }
+  for (const state of [{ version: 23 }, { version: 25 }, { available: false }]) {
+    reset(state); adapter.applyNormalAttribute(control);
+    assert.equal(applied.background, 'readable-surface'); assert.equal(applied.selectedBackground, 'readable-surface');
+    assert.equal(runtime.nativeReads, 0);
+  }
+});
+
+test('category loading-to-enabled transition reapplies transparent native material after the enabled state', () => {
+  reset(); const events = [];
+  const control = { enabled(value) { events.push(['enabled', value]); },
+    backgroundColor(value) { events.push(['background', value]); },
+    selectedColor(value) { events.push(['selected', value]); },
+    systemMaterial(value) { events.push(['material', value]); } };
+  for (const enabled of [false, true]) {
+    events.length = 0;
+    new material.CategoryTabMaterialModifier('ultraThin', false, 'fallback', enabled).applyNormalAttribute(control);
+    assert.deepEqual(events[0], ['enabled', enabled]);
+    assert.equal(events.at(-1)[0], 'material');
+    assert.deepEqual(events.filter(([key]) => key === 'background').at(-1), ['background', Color.Transparent]);
+    assert.deepEqual(events.filter(([key]) => key === 'selected').at(-1), ['selected', Color.Transparent]);
   }
 });

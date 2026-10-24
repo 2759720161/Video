@@ -1,8 +1,22 @@
 import { CatVodVideo } from '../../providers/catvod/CatVodModels'
 import { CatVodCodec } from '../../providers/catvod/CatVodCodec'
+import { HomeCarouselItem } from '../../components/media/carousel/HomeCarouselItem'
 
 /** Keep the first page's featured selection independent of later pagination. */
 export class CatVodHeroPresentation {
+  /** ForEach must rebuild stale @Prop bindings when a cached proxy URL becomes available. */
+  static posterKey(video: CatVodVideo): string {
+    return JSON.stringify([video.id, video.poster, video.name, video.remarks, video.searchOnly])
+  }
+
+  static carouselItems(videos: CatVodVideo[]): HomeCarouselItem[] {
+    return videos.map((video: CatVodVideo): HomeCarouselItem => {
+      const item = new HomeCarouselItem()
+      item.id = video.id; item.title = video.name; item.artworkUrl = video.poster
+      item.subtitle = CatVodHeroPresentation.metadata(video).join(' · ') || CatVodHeroPresentation.summary(video)
+      return item
+    })
+  }
   static select(videos: CatVodVideo[]): CatVodVideo[] {
     const result: CatVodVideo[] = []
     const seen: Set<string> = new Set()
@@ -13,6 +27,13 @@ export class CatVodHeroPresentation {
       seen.add(video.id); result.push(video)
     }
     return result
+  }
+
+  /** Filter only the displayed grid; the complete page remains available for caching and pagination. */
+  static belowHero(videos: CatVodVideo[], featured: CatVodVideo[]): CatVodVideo[] {
+    if (featured.length === 0) return videos
+    const ids = new Set(featured.map((video: CatVodVideo) => video.id))
+    return videos.filter((video: CatVodVideo) => !ids.has(video.id))
   }
 
   static summary(video: CatVodVideo): string {

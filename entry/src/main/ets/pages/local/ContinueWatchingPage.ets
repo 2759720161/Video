@@ -11,6 +11,11 @@ import { LocalPlayerExtension } from '../../providers/local/LocalPlayerExtension
 import { LOCAL_VIDEO_HISTORY_VERSION_KEY } from '../../store/LocalVideoHistoryChangeSignal'
 import { Logger } from '../../utils/Logger'
 import { PLAYBACK_HISTORY_VERSION_KEY } from '../../store/PlaybackHistoryChangeSignal'
+import { ResumeFrameStore } from '../../services/media/ResumeFrameStore'
+import { MediaProgressBar } from '../../components/media/MediaProgressBar'
+import { PageLoadingState } from '../../components/common/PageLoadingState'
+import { CatPlaybackHistoryScope } from '../../providers/catvod/CatPlaybackHistoryScope'
+import { CatNodeSubscriptionCodec } from '../../providers/catvod/CatNodeSubscription'
 import {
   getBottomSpacerHeight,
   getTopSpacerHeight,
@@ -44,6 +49,13 @@ struct ContinueWatchingPage {
   @State isEditMode: boolean = false
   @State selectedIds: string[] = []
   @State showDeleteDialog: boolean = false
+  @State private resumeLayout: boolean = false
+  @State private historyLoading: boolean = true
+  @State private openingRecordKey: string = ''
+  private sourceFilter: string = ''
+  private sourceNames: Record<string, string> = {}
+  private spiderFilter: string = ''
+  private scopeName: string = ''
   private scroller: Scroller = new Scroller()
   private unifiedHistoryStore: PlaybackHistoryStore = new PlaybackHistoryStore()
   private historyRepository: PlaybackHistoryRepository = new PlaybackHistoryRepository()
@@ -51,6 +63,11 @@ struct ContinueWatchingPage {
   private reloadGeneration: number = 0
 
   aboutToAppear(): void {
+    const params = router.getParams() as Record<string, Object>
+    this.resumeLayout = params?.['view'] === 'continue'
+    this.sourceFilter = this.resumeLayout && typeof params?.['sourceId'] === 'string' ? params['sourceId'] as string : ''
+    this.spiderFilter = this.resumeLayout && typeof params?.['spiderKey'] === 'string' ? params['spiderKey'] as string : ''
+    this.scopeName = this.resumeLayout && typeof params?.['scopeName'] === 'string' ? params['scopeName'] as string : ''
     this.reloadHistory()
   }
 
@@ -94,11 +111,18 @@ struct ContinueWatchingPage {
           Blank().height(getTopSpacerHeight(this.topSafeHeight)).width('100%')
 
           if (this.records.length > 0) {
-            if (!this.isEditMode) {
-              this.HistoryHighlights()
-              this.FilterBar()
+            if (this.resumeLayout) {
+              this.ResumeList()
+            } else {
+              if (!this.isEditMode) {
+                this.HistoryHighlights()
+                this.FilterBar()
+              }
+              this.HistoryGroups()
             }
-            this.HistoryGroups()
+          } else if (this.resumeLayout && this.historyLoading) {
+            PageLoadingState({ title: this.getUIContext().getHostContext()!.resourceManager.getStringSync(
+              $r('app.string.continue_watching_loading').id), minHeight: 280 })
           } else {
             this.EmptyState()
           }
@@ -131,6 +155,58 @@ struct ContinueWatchingPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  @Builder
+  private ResumeList(): void {
+    Column({ space: 16 }) {
+      ForEach(this.records, (record: PlaybackHistoryViewItem) => {
+        this.ResumeMediaRow(record)
+      }, (record: PlaybackHistoryViewItem) => JSON.stringify([record.key, record.artworkUrl, record.positionMs]))
+      Text($r('app.string.continue_watching_all_loaded')).fontSize(13)
+        .fontColor($r('app.color.text_secondary')).width('100%').textAlign(TextAlign.Center)
+        .padding({ top: 12, bottom: 20 })
+    }.width('100%').padding({ top: 12 })
+  }
+
+  @Builder
+  private ResumeMediaRow(record: PlaybackHistoryViewItem): void {
+    Button({ type: ButtonType.Normal }) {
+      Row({ space: 12 }) {
+        Stack({ alignContent: Alignment.BottomStart }) {
+          Image(record.artworkUrl || $r('app.media.ic_placeholder')).width('100%').height('100%')
+            .objectFit(ImageFit.Cover).draggable(false)
+          Column() {}.width('100%').height(42)
+            .linearGradient({ angle: 180, colors: [['#00000000', 0], ['#99000000', 1]] })
+          Text($r('app.string.continue_watching_position', this.formatTime(record.positionMs)))
+            .fontSize(11).fontWeight(FontWeight.Medium).fontColor(Color.White)
+            .margin({ left: 10, bottom: 20 }).maxLines(1)
+          MediaProgressBar({ positionMs: record.positionMs, durationMs: record.durationMs })
+            .width('calc(100% - 20vp)').margin({ left: 10, bottom: 8 })
+          if (this.openingRecordKey === record.key) {
+            LoadingProgress().width(24).height(24).color(Color.White).align(Alignment.Center)
+          }
+        }.width('42%').aspectRatio(16 / 9).borderRadius(14).clip(true)
+        Column({ space: 5 }) {
+          Text(record.title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+            .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+          if (record.subtitle.length > 0) {
+            Text(record.subtitle).fontSize(12).fontColor($r('app.color.text_secondary'))
+              .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+          }
+          Text($r('app.string.continue_watching_source', this.scopeName || this.sourceNames[record.sourceId] || record.sourceId))
+            .fontSize(12).fontColor($r('app.color.text_secondary')).maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        if (this.isEditMode) {
+          SymbolGlyph(this.isSelected(record.key) ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.checkmark_circle'))
+            .fontSize(24).fontColor([this.isSelected(record.key) ? $r('app.color.accent_blue') : $r('app.color.text_secondary')])
+        }
+      }.width('100%').alignItems(VerticalAlign.Center)
+    }.width('100%').padding(0).backgroundColor(Color.Transparent).borderRadius(14)
+      .enabled(this.openingRecordKey.length === 0)
+      .onClick(() => this.handleRecordTap(record))
+      .gesture(LongPressGesture().onAction(() => { if (!this.isEditMode) this.showRecordActions(record) }))
   }
 
   @Builder
@@ -405,29 +481,47 @@ struct ContinueWatchingPage {
       return
     }
     const generation = ++this.reloadGeneration
+    this.historyLoading = true
     try {
       const sources = await MediaSourceStore.getAll()
       if (generation !== this.reloadGeneration) return
       const enabledSources: Record<string, boolean> = {}
-      for (let i = 0; i < sources.length; i++) enabledSources[sources[i].id] = sources[i].enabled
+      const names: Record<string, string> = {}
+      for (let i = 0; i < sources.length; i++) {
+        enabledSources[sources[i].id] = sources[i].enabled
+        names[sources[i].id] = sources[i].name
+      }
       const all = await this.historyRepository.getAll()
       if (generation !== this.reloadGeneration) return
       const merged: PlaybackHistoryViewItem[] = []
+      const selected = sources.find((source) => source.id === this.sourceFilter)
+      const legacyKey = selected?.providerType === 'catnode' ? CatNodeSubscriptionCodec.decode(selected.configJson).legacySpiderKey : ''
       for (let i = 0; i < all.length; i++) {
         const item = all[i]
         if (item.sourceId !== 'local' && enabledSources[item.sourceId] !== true) continue
+        if (this.resumeLayout && (this.sourceFilter.length === 0 || item.sourceId !== this.sourceFilter || this.isCompleted(item))) continue
+        if (this.resumeLayout && selected?.providerType === 'catnode' && this.spiderFilter.length === 0) continue
+        if (this.resumeLayout && !CatPlaybackHistoryScope.matches(item.mediaId, this.spiderFilter, legacyKey)) continue
         merged.push(item)
       }
       merged.sort((left: PlaybackHistoryViewItem, right: PlaybackHistoryViewItem) => right.lastPlayedAt - left.lastPlayedAt)
       await this.historyRepository.resolveArtwork(merged, getContext(this) as common.UIAbilityContext)
+      if (this.resumeLayout) {
+        for (const item of merged) {
+          if (generation !== this.reloadGeneration) return
+          const frame = await ResumeFrameStore.resolve(getContext(this) as common.UIAbilityContext, item.sourceId, item.mediaId, item.positionMs)
+          if (frame.length > 0) item.artworkUrl = frame
+        }
+      }
       if (generation !== this.reloadGeneration) return
+      this.sourceNames = names
       this.records = merged
       this.removeMissingSelections()
     } catch (err) {
       if (generation !== this.reloadGeneration) return
       logger.warn('读取播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
       this.records = []
-    }
+    } finally { if (generation === this.reloadGeneration) this.historyLoading = false }
   }
 
   private getHistoryGroups(): PlaybackHistoryGroup[] {
@@ -658,7 +752,8 @@ struct ContinueWatchingPage {
   }
 
   private buildHistoryTitleBarOptions(): HdsNavigationTitleBarOptions {
-    const title = this.isEditMode ? '已选择 ' + this.selectedIds.length + ' 项' : '播放历史'
+    const title = this.isEditMode ? '已选择 ' + this.selectedIds.length + ' 项' : this.resumeLayout ?
+      this.getUIContext().getHostContext()!.resourceManager.getStringSync($r('app.string.continue_watching_title').id) : '播放历史'
     const base = buildTitleBarOptions(title, this.hdsMaterialLevel)
     if (this.records.length === 0) {
       return base
@@ -682,6 +777,13 @@ struct ContinueWatchingPage {
         title: { mainTitle: title },
         menu: { value: [{ content: deleteIcon }, { content: selectAllIcon }] }
       }
+      return base
+    }
+    if (this.resumeLayout) {
+      const manageIcon: HdsNavigationIconOptions = { icon: $r('sys.symbol.trash'),
+        label: this.getUIContext().getHostContext()!.resourceManager.getStringSync($r('app.string.continue_watching_edit').id),
+        action: () => this.isEditMode = true }
+      base.content = { title: { mainTitle: title }, menu: { value: [{ content: manageIcon }] } }
       return base
     }
     const editIcon: HdsNavigationIconOptions = {
@@ -852,12 +954,16 @@ struct ContinueWatchingPage {
   }
 
   private async openRecord(item: PlaybackHistoryViewItem, fromBeginning: boolean = false): Promise<void> {
+    if (this.openingRecordKey.length > 0) return
+    this.openingRecordKey = item.key
     try {
       await ProviderPlaybackLauncher.openById(this.getUIContext(), item.sourceId, item.mediaId,
         fromBeginning ? 0 : item.positionMs, fromBeginning)
     } catch (err) {
       logger.warn('打开播放历史失败: %{public}s', err instanceof Error ? err.message : String(err))
-    }
+      this.getUIContext().getPromptAction().showToast({ message: this.getUIContext().getHostContext()!.resourceManager.getStringSync(
+        $r('app.string.continue_watching_failed').id) })
+    } finally { this.openingRecordKey = '' }
   }
 
   private formatLastPlayedAt(timestamp: number): string {

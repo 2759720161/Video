@@ -14,6 +14,8 @@ export class PlaybackStream {
 
   /** Unix 毫秒时间戳，0 表示不会过期。 */
   expiresAt: number = 0
+  /** A validated cached stream; an authorization/resource failure must force a fresh resolution. */
+  reused: boolean = false
 
   isExpired(now: number = Date.now()): boolean {
     return this.expiresAt > 0 && now >= this.expiresAt
